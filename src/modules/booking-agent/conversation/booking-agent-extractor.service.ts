@@ -1,11 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { addDays } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
 import { getMissingRequiredFields } from "../booking-agent.helper";
-import { getDurationUnitClarification } from "./booking-rules";
+import { getDurationUnitClarification, shouldApplyDraftPatch } from "./booking-rules";
 import {
   isAgentRequestControl,
   isBareCancelControl,
@@ -72,16 +70,9 @@ const VEHICLE_TYPE_REPLIES = {
   crossover: "CROSSOVER",
 } as const;
 
-const AIRPORT_PICKUP_PATTERN =
-  /\b(?:airport\s+(?:pickup|pick-up|transfer)|flight\s+(?:arrival|pickup)|pick\s+me\s+up\s+from\s+the\s+airport)\b/i;
-const AIRPORT_FLIGHT_NUMBER_PATTERN =
-  /\bflight(?:\s+(?:number|no\.?))?\s*[:#-]?\s*(?!(?:on|in|at|by|to|of)\s)([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/i;
-const AIRPORT_PICKUP_TOMORROW_PATTERN =
-  /\b(?:(?:airport\s+(?:pickup|pick-up|transfer)|flight|arrival|pickup)(?:\s+date)?\s*(?:(?:is|on|for)\s*)?tomorrow|tomorrow\s*(?:[,;:-]\s*)?flight)\b/i;
-const AIRPORT_DESTINATION_PATTERN =
-  /\b(?:destination(?:\s+address)?\s*(?:is|:|-)|take\s+me\s+(?:to|at)|drop\s+me(?:\s+off)?\s+(?:to|at))\s+(.+?)(?=\s*(?:[,;:-]\s*)?(?:(?:today|tomorrow|flight)\b|(?:on|for)\s+(?:\d{1,2}(?:st|nd|rd|th)?|\d{4}-\d{2}-\d{2}|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b)|[.!?]|$)/i;
-const AIRPORT_GOING_TO_DESTINATION_PATTERN =
-  /\bgoing\s+to\s+(?!(?:need|pay|book|have|get|want|use|ask|check|call|wait|try|cancel|change)\b)(.+?)(?=\s*(?:[,;:-]\s*)?(?:(?:today|tomorrow|flight)\b|(?:on|for)\s+(?:\d{1,2}(?:st|nd|rd|th)?|\d{4}-\d{2}-\d{2}|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b)|[.!?]|$)/i;
+const AIRPORT_PICKUP_PHRASES = ["airport pickup", "airport pick-up", "airport transfer"];
+const AIRPORT_EXTRACTION_RETRY_MESSAGE =
+  'The message explicitly requests an airport pickup, but the extraction was incomplete. Re-extract every explicit airport detail with intent "provide_info", not "greeting". Set bookingType to "AIRPORT_PICKUP", use pickupDate for the flight date, flightNumber for the flight, and dropoffLocation for the destination address. Do not set pickupLocation or pickupTime.';
 
 @Injectable()
 export class BookingAgentExtractorService {
@@ -120,32 +111,59 @@ export class BookingAgentExtractorService {
         stage,
         messages,
       });
-      const response = await this.openai.chat.completions.create(
-        {
-          model: BOOKING_AGENT_EXTRACTION_MODEL,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: inboundMessage },
-          ],
-          response_format: { type: "json_object" },
-        },
-        {
-          timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
-          maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
-        },
+      const normalizedMessage = inboundMessage.toLowerCase();
+      const isAirportPickupRequest = AIRPORT_PICKUP_PHRASES.some((phrase) =>
+        normalizedMessage.includes(phrase),
       );
+      const requestExtraction = (prompt: string) =>
+        this.openai.chat.completions.create(
+          {
+            model: BOOKING_AGENT_EXTRACTION_MODEL,
+            messages: [
+              { role: "system", content: prompt },
+              { role: "user", content: inboundMessage },
+            ],
+            response_format: { type: "json_object" },
+          },
+          {
+            timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
+            maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
+          },
+        );
+      const response = await requestExtraction(systemPrompt);
+      const content = response.choices[0]?.message.content ?? "";
+      let validated = extractionSchema.parse(JSON.parse(content));
       this.logger.debug({ conversationId }, "Extraction response received");
 
-      const content = response.choices[0]?.message.content ?? "";
-      const parsed = JSON.parse(content);
-      const validated = extractionSchema.parse(parsed);
-      const recovered = this.recoverAirportPickupExtraction(
-        inboundMessage,
-        draft,
-        validated.intent,
-        validated.draftPatch,
-      );
-      const draftPatch: ExtractionResult["draftPatch"] = recovered.draftPatch;
+      if (
+        isAirportPickupRequest &&
+        (!validated.draftPatch.bookingType || !shouldApplyDraftPatch(validated.intent))
+      ) {
+        this.logger.warn({ conversationId }, "Retrying incomplete airport pickup extraction");
+        try {
+          const retryResponse = await requestExtraction(
+            `${systemPrompt}\n\n${AIRPORT_EXTRACTION_RETRY_MESSAGE}`,
+          );
+          const retryContent = retryResponse.choices[0]?.message.content ?? "";
+          validated = extractionSchema.parse(JSON.parse(retryContent));
+        } catch (error) {
+          this.logger.warn(
+            {
+              conversationId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            "Airport pickup extraction retry failed; using initial extraction",
+          );
+        }
+      }
+
+      const draftPatch: ExtractionResult["draftPatch"] = { ...validated.draftPatch };
+      const intent =
+        isAirportPickupRequest &&
+        Object.keys(draftPatch).length > 0 &&
+        !shouldApplyDraftPatch(validated.intent)
+          ? "provide_info"
+          : validated.intent;
       const clarificationPrompt = getDurationUnitClarification(
         inboundMessage,
         draftPatch.bookingType ?? draft.bookingType,
@@ -156,7 +174,7 @@ export class BookingAgentExtractorService {
       }
 
       return {
-        intent: recovered.intent,
+        intent,
         draftPatch,
         selectionHint: validated.selectionHint,
         preferenceHint: validated.preferenceHint,
@@ -178,47 +196,6 @@ export class BookingAgentExtractorService {
       );
       throw new BookingAgentExtractionFailedException(conversationId);
     }
-  }
-
-  private recoverAirportPickupExtraction(
-    inboundMessage: string,
-    currentDraft: BookingAgentState["draft"],
-    intent: ExtractionResult["intent"],
-    modelPatch: ExtractionResult["draftPatch"],
-  ): Pick<ExtractionResult, "intent" | "draftPatch"> {
-    const mentionsAirportPickup = AIRPORT_PICKUP_PATTERN.test(inboundMessage);
-    const isAirportPickup =
-      mentionsAirportPickup ||
-      modelPatch.bookingType === "AIRPORT_PICKUP" ||
-      currentDraft.bookingType === "AIRPORT_PICKUP";
-    if (!isAirportPickup) {
-      return { intent, draftPatch: { ...modelPatch } };
-    }
-
-    const flightNumber = AIRPORT_FLIGHT_NUMBER_PATTERN.exec(inboundMessage)?.[1]
-      ?.replaceAll(/\s/g, "")
-      .toUpperCase();
-    const dropoffMatch =
-      AIRPORT_DESTINATION_PATTERN.exec(inboundMessage) ??
-      AIRPORT_GOING_TO_DESTINATION_PATTERN.exec(inboundMessage);
-    const dropoffLocation = dropoffMatch?.[1]?.trim().replace(/[,;:\s]+$/, "") || undefined;
-    const pickupDate = AIRPORT_PICKUP_TOMORROW_PATTERN.test(inboundMessage)
-      ? formatInTimeZone(addDays(new Date(), 1), "Africa/Lagos", "yyyy-MM-dd")
-      : undefined;
-
-    return {
-      intent:
-        mentionsAirportPickup && (intent === "unknown" || intent === "greeting")
-          ? "provide_info"
-          : intent,
-      draftPatch: {
-        ...modelPatch,
-        ...(mentionsAirportPickup && !modelPatch.bookingType && { bookingType: "AIRPORT_PICKUP" }),
-        ...(!modelPatch.flightNumber && flightNumber && { flightNumber }),
-        ...(!modelPatch.pickupDate && pickupDate && { pickupDate }),
-        ...(!modelPatch.dropoffLocation && dropoffLocation && { dropoffLocation }),
-      },
-    };
   }
 
   private static readonly BUTTON_RESULT_MAP: Record<string, ExtractionResult> = {

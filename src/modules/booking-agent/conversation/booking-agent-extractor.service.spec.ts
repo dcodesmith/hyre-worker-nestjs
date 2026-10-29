@@ -413,22 +413,39 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.pickupLocation).toBe("Victoria Island");
     });
 
-    it("recovers the incident airport fields when the model omits them", async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-10-29T09:34:00.000Z"));
-      openaiMock.chat.completions.create.mockResolvedValue({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                intent: "unknown",
-                draftPatch: {},
-                confidence: 0.3,
-              }),
+    it("retries the incident airport extraction when booking type is omitted", async () => {
+      openaiMock.chat.completions.create
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "greeting",
+                  draftPatch: { flightNumber: "BA75" },
+                  confidence: 0.3,
+                }),
+              },
             },
-          },
-        ],
-      });
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "provide_info",
+                  draftPatch: {
+                    bookingType: "AIRPORT_PICKUP",
+                    pickupDate: "2026-10-30",
+                    flightNumber: "BA75",
+                    dropoffLocation: "Mason Apartments, Ikoyi",
+                  },
+                  confidence: 0.95,
+                }),
+              },
+            },
+          ],
+        });
 
       const result = await service.extract(
         buildState({
@@ -446,144 +463,38 @@ describe("BookingAgentExtractorService", () => {
       });
       expect(result.draftPatch.pickupLocation).toBeUndefined();
       expect(result.draftPatch.pickupTime).toBeUndefined();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
+      expect(openaiMock.chat.completions.create.mock.calls[1][0].messages[0]?.content).toContain(
+        "extraction was incomplete",
+      );
     });
 
-    it.each([
-      {
-        message: "I'm going to need airport pickup",
-        draft: {},
-        expectedPatch: { bookingType: "AIRPORT_PICKUP" },
-      },
-      {
-        message: "I'm going to pay later",
-        draft: { bookingType: "AIRPORT_PICKUP" as const },
-        expectedPatch: {},
-      },
-      {
-        message: "flight on 30 October",
-        draft: { bookingType: "AIRPORT_PICKUP" as const },
-        expectedPatch: {},
-      },
-      {
-        message: "I'll send the flight number tomorrow",
-        draft: { bookingType: "AIRPORT_PICKUP" as const },
-        expectedPatch: {},
-      },
-    ])(
-      "does not recover airport fields from ambiguous message: $message",
-      async ({ message, draft, expectedPatch }) => {
-        openaiMock.chat.completions.create.mockResolvedValue({
+    it("uses the initial extraction when the airport retry fails", async () => {
+      openaiMock.chat.completions.create
+        .mockResolvedValueOnce({
           choices: [
             {
               message: {
                 content: JSON.stringify({
-                  intent: "unknown",
-                  draftPatch: {},
-                  confidence: 0.3,
+                  intent: "provide_info",
+                  draftPatch: { flightNumber: "BA75" },
+                  confidence: 0.7,
                 }),
               },
             },
           ],
-        });
-
-        const result = await service.extract(
-          buildState({
-            inboundMessage: message,
-            draft,
-          }),
-        );
-
-        expect(result.draftPatch).toEqual(expectedPatch);
-      },
-    );
-
-    it("stops recovered destination before date and flight clauses", async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-10-29T09:34:00.000Z"));
-      openaiMock.chat.completions.create.mockResolvedValue({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                intent: "provide_info",
-                draftPatch: {},
-                confidence: 0.8,
-              }),
-            },
-          },
-        ],
-      });
+        })
+        .mockRejectedValueOnce(new Error("retry unavailable"));
 
       const result = await service.extract(
         buildState({
-          inboundMessage: "going to Lekki tomorrow flight BA75",
-          draft: { bookingType: "AIRPORT_PICKUP" },
+          inboundMessage: "airport pickup, flight BA75",
         }),
       );
 
-      expect(result.draftPatch).toEqual({
-        pickupDate: "2026-10-30",
-        flightNumber: "BA75",
-        dropoffLocation: "Lekki",
-      });
-    });
-
-    it("recovers an explicit destination follow-up for an existing airport draft", async () => {
-      openaiMock.chat.completions.create.mockResolvedValue({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                intent: "provide_info",
-                draftPatch: {},
-                confidence: 0.8,
-              }),
-            },
-          },
-        ],
-      });
-
-      const result = await service.extract(
-        buildState({
-          inboundMessage: "destination is 12 Admiralty Way, Lekki",
-          draft: { bookingType: "AIRPORT_PICKUP" },
-        }),
-      );
-
-      expect(result.draftPatch).toEqual({
-        dropoffLocation: "12 Admiralty Way, Lekki",
-      });
-    });
-
-    it("does not override airport fields returned by the model", async () => {
-      openaiMock.chat.completions.create.mockResolvedValue({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                intent: "update_info",
-                draftPatch: {
-                  flightNumber: "AA100",
-                  dropoffLocation: "Victoria Island",
-                },
-                confidence: 0.9,
-              }),
-            },
-          },
-        ],
-      });
-
-      const result = await service.extract(
-        buildState({
-          inboundMessage: "flight BA75, going to Lekki",
-          draft: { bookingType: "AIRPORT_PICKUP" },
-        }),
-      );
-
-      expect(result.draftPatch).toEqual({
-        flightNumber: "AA100",
-        dropoffLocation: "Victoria Island",
-      });
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch).toEqual({ flightNumber: "BA75" });
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
     });
 
     it("does not override an explicit model correction away from airport pickup", async () => {
@@ -610,6 +521,7 @@ describe("BookingAgentExtractorService", () => {
 
       expect(result.intent).toBe("update_info");
       expect(result.draftPatch.bookingType).toBe("DAY");
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
     });
 
     it("requests clarification for conflicting booking type and duration units", async () => {

@@ -108,21 +108,13 @@ BOOKING TYPE MAPPING:
 - "full day", "24 hours", "round the clock" → bookingType: "FULL_DAY"
 - "airport pickup", "airport transfer", "flight pickup", "pick me up from the airport" → bookingType: "AIRPORT_PICKUP"
 
-AIRPORT PICKUP EXTRACTION (CRITICAL - extract ALL of these when user mentions airport pickup):
-- bookingType: "AIRPORT_PICKUP" - set this whenever user mentions airport pickup, airport transfer, flight arrival, or similar
-- flightNumber: extract from "flight BA75", "BA75", "flight number BA75", "arriving on BA75" → flightNumber: "BA75"
-- pickupDate: the flight arrival date (e.g., "tomorrow", "Friday", "30th October") → parse to YYYY-MM-DD
-- dropoffLocation: the destination address where user wants to go AFTER airport (e.g., "going to Mason Apartments, Ikoyi", "to Victoria Island", "drop me at Lekki") → dropoffLocation: "Mason Apartments, Ikoyi"
+AIRPORT PICKUP EXTRACTION:
+- An airport pickup request with booking details is provide_info or new_booking, never greeting
+- Extract bookingType, flightNumber, pickupDate (flight date), and dropoffLocation (destination address)
 - DO NOT set pickupLocation for airport pickups - the system derives it from the flight
 - DO NOT set pickupTime for airport pickups - the system derives it from flight arrival time
-
-AIRPORT PICKUP EXAMPLES:
 - "airport pickup for tomorrow, flight BA75, going to Mason Apartments, Ikoyi" →
   bookingType: "AIRPORT_PICKUP", pickupDate: "${tomorrowFormatted}", flightNumber: "BA75", dropoffLocation: "Mason Apartments, Ikoyi"
-- "pick me up from the airport on Friday, flight EK123, take me to Victoria Island" →
-  bookingType: "AIRPORT_PICKUP", pickupDate: (next Friday), flightNumber: "EK123", dropoffLocation: "Victoria Island"
-- "I need an airport transfer tomorrow, arriving BA999 to Lekki" →
-  bookingType: "AIRPORT_PICKUP", pickupDate: "${tomorrowFormatted}", flightNumber: "BA999", dropoffLocation: "Lekki"
 
 INTENT DETECTION:
 - "hi", "hello", "good morning" → greeting

@@ -611,24 +611,45 @@ describe("BookingAgentTurnService", () => {
           customerId: nextCustomerId,
         }),
       );
-      const openaiCreate = vi.fn().mockResolvedValue({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                intent: "unknown",
-                draftPatch: {},
-                confidence: 0.3,
-              }),
+      const openaiCreate = vi
+        .fn()
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "greeting",
+                  draftPatch: { flightNumber: "BA75" },
+                  confidence: 0.3,
+                }),
+              },
             },
-          },
-        ],
-      });
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "provide_info",
+                  draftPatch: {
+                    bookingType: "AIRPORT_PICKUP",
+                    pickupDate: "2026-10-30",
+                    flightNumber: "BA75",
+                    dropoffLocation: "Mason Apartments, Ikoyi",
+                  },
+                  confidence: 0.95,
+                }),
+              },
+            },
+          ],
+        });
       const extractor = new BookingAgentExtractorService(
         { chat: { completions: { create: openaiCreate } } } as never,
         {
           setContext: vi.fn(),
           debug: vi.fn(),
+          warn: vi.fn(),
           error: vi.fn(),
         } as never,
       );
@@ -669,7 +690,7 @@ describe("BookingAgentTurnService", () => {
       expect(firstTurn.response?.text).toContain("vehicle type");
       expect(firstTurn.response?.text).not.toMatch(/one moment|let me check|searching now/i);
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
-      expect(openaiCreate).toHaveBeenCalledTimes(1);
+      expect(openaiCreate).toHaveBeenCalledTimes(2);
 
       if (!savedState) {
         throw new Error("Expected the first airport pickup turn to be persisted");
@@ -734,7 +755,7 @@ describe("BookingAgentTurnService", () => {
         "2026-10-30",
       );
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledTimes(1);
-      expect(openaiCreate).toHaveBeenCalledTimes(1);
+      expect(openaiCreate).toHaveBeenCalledTimes(2);
       expect(secondTurn.stage).toBe("presenting_options");
       expect(secondTurn.draft.vehicleType).toBe("SUV");
       expect(secondTurn.response?.text).toContain("Here are your options");
