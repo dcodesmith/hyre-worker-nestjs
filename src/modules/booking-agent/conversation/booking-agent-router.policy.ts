@@ -401,9 +401,10 @@ function buildResetDecision(): BookingAgentRouteDecision {
 function buildNewBookingDecision(
   draftPatch: Exclude<BookingAgentState["extraction"], null>["draftPatch"],
 ): BookingAgentRouteDecision {
+  const isComplete = getMissingRequiredFields(draftPatch).length === 0;
   return {
-    nextAction: BOOKING_AGENT_ACTIONS.RESPOND,
-    stage: "collecting",
+    nextAction: isComplete ? BOOKING_AGENT_ACTIONS.SEARCH : BOOKING_AGENT_ACTIONS.RESPOND,
+    stage: isComplete ? "searching" : "collecting",
     draft: { __clear: true, ...draftPatch },
     availableOptions: [],
     lastShownOptions: [],

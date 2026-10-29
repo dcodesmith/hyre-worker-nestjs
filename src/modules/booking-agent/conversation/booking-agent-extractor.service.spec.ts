@@ -448,6 +448,32 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.pickupTime).toBeUndefined();
     });
 
+    it("does not override an explicit model correction away from airport pickup", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "update_info",
+                draftPatch: { bookingType: "DAY" },
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "Change the airport pickup to a day booking",
+          draft: { bookingType: "AIRPORT_PICKUP" },
+        }),
+      );
+
+      expect(result.intent).toBe("update_info");
+      expect(result.draftPatch.bookingType).toBe("DAY");
+    });
+
     it("requests clarification for conflicting booking type and duration units", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
         choices: [

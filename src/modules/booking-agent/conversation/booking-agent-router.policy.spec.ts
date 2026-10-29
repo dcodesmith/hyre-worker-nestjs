@@ -24,6 +24,45 @@ describe("booking-agent-router.policy", () => {
     expect(decision.stage).toBe("searching");
   });
 
+  it.each([
+    {
+      name: "standard booking",
+      draftPatch: {
+        bookingType: "DAY" as const,
+        vehicleType: "SUV" as const,
+        pickupDate: "2026-10-30",
+        pickupTime: "09:00",
+        pickupLocation: "Ikoyi",
+        dropoffDate: "2026-10-30",
+        dropoffLocation: "Lekki",
+      },
+    },
+    {
+      name: "airport pickup",
+      draftPatch: {
+        bookingType: "AIRPORT_PICKUP" as const,
+        vehicleType: "SUV" as const,
+        pickupDate: "2026-10-30",
+        flightNumber: "BA75",
+        dropoffLocation: "Mason Apartments, Ikoyi",
+      },
+    },
+  ])("searches immediately when a new $name contains every required field", ({ draftPatch }) => {
+    const decision = resolveRouteDecision(
+      buildState({
+        extraction: {
+          intent: "new_booking",
+          draftPatch,
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(decision.nextAction).toBe("search");
+    expect(decision.stage).toBe("searching");
+    expect(decision.draft).toEqual({ __clear: true, ...draftPatch });
+  });
+
   it("routes to presenting_options when options already exist", () => {
     const state = buildState({
       draft: {

@@ -207,7 +207,7 @@ export class BookingAgentExtractorService {
           : intent,
       draftPatch: {
         ...modelPatch,
-        ...(mentionsAirportPickup && { bookingType: "AIRPORT_PICKUP" }),
+        ...(mentionsAirportPickup && !modelPatch.bookingType && { bookingType: "AIRPORT_PICKUP" }),
         ...(!modelPatch.flightNumber && flightNumber && { flightNumber }),
         ...(!modelPatch.pickupDate && pickupDate && { pickupDate }),
         ...(!modelPatch.dropoffLocation && dropoffLocation && { dropoffLocation }),
