@@ -70,7 +70,12 @@ const VEHICLE_TYPE_REPLIES = {
   crossover: "CROSSOVER",
 } as const;
 
-const AIRPORT_PICKUP_PHRASES = ["airport pickup", "airport pick-up", "airport transfer"];
+const AIRPORT_PICKUP_PHRASES = [
+  "airport pickup",
+  "airport pick-up",
+  "airport transfer",
+  "from the airport",
+];
 const AIRPORT_EXTRACTION_RETRY_MESSAGE =
   'The message explicitly requests an airport pickup, but the extraction was incomplete. Re-extract every explicit airport detail with intent "provide_info", not "greeting". Set bookingType to "AIRPORT_PICKUP", use pickupDate for the flight date, flightNumber for the flight, and dropoffLocation for the destination address. Do not set pickupLocation or pickupTime.';
 
@@ -137,7 +142,8 @@ export class BookingAgentExtractorService {
 
       if (
         isAirportPickupRequest &&
-        (!validated.draftPatch.bookingType || !shouldApplyDraftPatch(validated.intent))
+        (!validated.draftPatch.bookingType ||
+          (validated.intent !== "greeting" && !shouldApplyDraftPatch(validated.intent)))
       ) {
         this.logger.warn({ conversationId }, "Retrying incomplete airport pickup extraction");
         try {
@@ -159,9 +165,9 @@ export class BookingAgentExtractorService {
 
       const draftPatch: ExtractionResult["draftPatch"] = { ...validated.draftPatch };
       const intent =
-        isAirportPickupRequest &&
         Object.keys(draftPatch).length > 0 &&
-        !shouldApplyDraftPatch(validated.intent)
+        (validated.intent === "greeting" ||
+          (isAirportPickupRequest && !shouldApplyDraftPatch(validated.intent)))
           ? "provide_info"
           : validated.intent;
       const clarificationPrompt = getDurationUnitClarification(

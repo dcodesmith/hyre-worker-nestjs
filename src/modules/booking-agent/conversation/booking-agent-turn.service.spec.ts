@@ -487,7 +487,123 @@ describe("BookingAgentTurnService", () => {
       });
 
       expect(result.stage).toBe("greeting");
+      expect(result.draft).toEqual({});
+      expect(result.response?.text).toBe("Hello! How can I help you today?");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
     });
+
+    it.each([
+      {
+        name: "standard booking",
+        message: "Day booking tomorrow at 9am from Ikoyi to Lekki in an SUV",
+        draftPatch: {
+          bookingType: "DAY" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          pickupTime: "09:00",
+          pickupLocation: "Ikoyi",
+          dropoffDate: "2026-10-30",
+          dropoffLocation: "Lekki",
+        },
+      },
+      {
+        name: "airport booking",
+        message: "SUV from the airport tomorrow, flight BA75, to Lekki",
+        draftPatch: {
+          bookingType: "AIRPORT_PICKUP" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          flightNumber: "BA75",
+          dropoffLocation: "Lekki",
+        },
+      },
+    ])(
+      "preserves a plain greeting before later $name details and searches when complete",
+      async ({ message, draftPatch }) => {
+        extractorServiceMock.extract
+          .mockResolvedValueOnce({
+            intent: "greeting",
+            draftPatch: {},
+            confidence: 0.95,
+          })
+          .mockResolvedValueOnce({
+            intent: "provide_info",
+            draftPatch,
+            confidence: 0.95,
+          });
+
+        const greetingTurn = await service.invoke({
+          conversationId,
+          messageId: "msg_greeting",
+          message: "Hello",
+        });
+
+        expect(greetingTurn.stage).toBe("greeting");
+        expect(greetingTurn.draft).toEqual({});
+        expect(greetingTurn.response?.text).toBe("Hello! How can I help you today?");
+        expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+
+        stateServiceMock.loadState.mockResolvedValue(greetingTurn);
+        stateServiceMock.mergeWithExisting.mockImplementation((existing) => ({
+          ...existing,
+          inboundMessage: message,
+          inboundMessageId: "msg_booking_details",
+          response: null,
+          outboxItems: [],
+          extraction: null,
+          nextAction: null,
+        }));
+        toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+          exactMatches: [buildVehicleOption()],
+          alternatives: [],
+        });
+
+        if (draftPatch.bookingType === "AIRPORT_PICKUP") {
+          flightAwareServiceMock.searchAirportPickupFlight.mockResolvedValue({
+            warning: null,
+            flight: {
+              flightNumber: "BA75",
+              destination: "LOS",
+              destinationIATA: "LOS",
+              destinationName: "Murtala Muhammed International Airport",
+              destinationCity: "Lagos",
+              arrivalTime: "2026-10-30T09:00:00.000Z",
+            },
+          });
+          mapsServiceMock.calculateAirportTripDuration.mockResolvedValue({
+            durationMinutes: 45,
+            distanceMeters: 25_000,
+            isEstimate: false,
+          });
+          bookingLegServiceMock.generateLegs.mockReturnValue([
+            {
+              legDate: new Date("2026-10-30T09:40:00.000Z"),
+              legStartTime: new Date("2026-10-30T09:40:00.000Z"),
+              legEndTime: new Date("2026-10-30T10:34:00.000Z"),
+            },
+          ]);
+        }
+
+        const bookingTurn = await service.invoke({
+          conversationId,
+          messageId: "msg_booking_details",
+          message,
+        });
+
+        expect(bookingTurn.draft.bookingType).toBe(draftPatch.bookingType);
+        expect(bookingTurn.draft.vehicleType).toBe(draftPatch.vehicleType);
+        expect(bookingTurn.draft.pickupDate).toBe(draftPatch.pickupDate);
+        expect(bookingTurn.draft.dropoffLocation).toBe("Victoria Island, Lagos, Nigeria");
+        if (draftPatch.bookingType === "AIRPORT_PICKUP") {
+          expect(bookingTurn.draft.flightNumber).toBe(draftPatch.flightNumber);
+        } else {
+          expect(bookingTurn.draft.pickupTime).toBe(draftPatch.pickupTime);
+          expect(bookingTurn.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
+        }
+        expect(bookingTurn.stage).toBe("presenting_options");
+        expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledTimes(1);
+      },
+    );
 
     it("clears stale booking state when greeting from awaiting_payment stage", async () => {
       const existingState = buildInitialState();

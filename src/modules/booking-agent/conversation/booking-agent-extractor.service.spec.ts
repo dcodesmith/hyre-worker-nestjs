@@ -377,8 +377,58 @@ describe("BookingAgentExtractorService", () => {
 
       expect(result.intent).toBe("greeting");
       expect(result.confidence).toBe(0.95);
-      expect(openaiMock.chat.completions.create).toHaveBeenCalled();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
     });
+
+    it.each([
+      {
+        name: "standard booking",
+        inboundMessage: "Hi, I need an SUV day booking tomorrow at 9am from Ikoyi to Lekki",
+        draftPatch: {
+          bookingType: "DAY" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          pickupTime: "09:00",
+          pickupLocation: "Ikoyi",
+          dropoffDate: "2026-10-30",
+          dropoffLocation: "Lekki",
+        },
+      },
+      {
+        name: "airport booking",
+        inboundMessage: "Hi, I need an SUV from the airport tomorrow, flight BA75, to Lekki",
+        draftPatch: {
+          bookingType: "AIRPORT_PICKUP" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          flightNumber: "BA75",
+          dropoffLocation: "Lekki",
+        },
+      },
+    ])(
+      "keeps details when a $name is mislabeled as greeting",
+      async ({ inboundMessage, draftPatch }) => {
+        openaiMock.chat.completions.create.mockResolvedValue({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "greeting",
+                  draftPatch,
+                  confidence: 0.8,
+                }),
+              },
+            },
+          ],
+        });
+
+        const result = await service.extract(buildState({ inboundMessage }));
+
+        expect(result.intent).toBe("provide_info");
+        expect(result.draftPatch).toEqual(draftPatch);
+        expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
+      },
+    );
 
     it("extracts booking info from message", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
