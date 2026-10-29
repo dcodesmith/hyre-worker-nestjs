@@ -36,6 +36,7 @@ describe("BookingAgentExtractorService", () => {
   afterEach(async () => {
     await moduleRef?.close();
     vi.resetAllMocks();
+    vi.useRealTimers();
   });
 
   describe("extract - interactive replies", () => {
@@ -410,6 +411,41 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.pickupDate).toBe("2026-03-01");
       expect(result.draftPatch.pickupTime).toBe("09:00");
       expect(result.draftPatch.pickupLocation).toBe("Victoria Island");
+    });
+
+    it("recovers the incident airport fields when the model omits them", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-29T09:34:00.000Z"));
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "unknown",
+                draftPatch: {},
+                confidence: 0.3,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage:
+            "airport pickup for tomorrow, flight BA75, going to Mason Apartments, Ikoyi",
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch).toEqual({
+        bookingType: "AIRPORT_PICKUP",
+        pickupDate: "2026-10-30",
+        flightNumber: "BA75",
+        dropoffLocation: "Mason Apartments, Ikoyi",
+      });
+      expect(result.draftPatch.pickupLocation).toBeUndefined();
+      expect(result.draftPatch.pickupTime).toBeUndefined();
     });
 
     it("requests clarification for conflicting booking type and duration units", async () => {

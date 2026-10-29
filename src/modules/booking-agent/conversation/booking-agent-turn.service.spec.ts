@@ -19,7 +19,10 @@ import { BookingAgentExtractorService } from "./booking-agent-extractor.service"
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
 import { BookingAgentStateService } from "./booking-agent-state.service";
 import { BookingAgentTurnService } from "./booking-agent-turn.service";
-import { getBookingAgentServiceUnavailableMessage } from "./conversation.const";
+import {
+  getBookingAgentServiceUnavailableMessage,
+  VEHICLE_CARD_CONTENT_SID,
+} from "./conversation.const";
 import { buildPricingPreview, buildVehicleOption } from "./conversation.factory";
 import type { BookingAgentState } from "./conversation.interface";
 import { createDefaultLocationValidationState } from "./conversation.interface";
@@ -247,6 +250,7 @@ describe("BookingAgentTurnService", () => {
     await moduleRef?.close();
     vi.resetAllMocks();
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   describe("invoke", () => {
@@ -591,6 +595,46 @@ describe("BookingAgentTurnService", () => {
     });
 
     it("replays the airport pickup request and dispatches search after the SUV reply", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-29T09:34:00.000Z"));
+      stateServiceMock.createInitialState.mockImplementation(
+        (
+          nextConversationId: string,
+          nextMessageId: string,
+          nextMessage: string,
+          nextCustomerId: string | null,
+        ) => ({
+          ...buildInitialState(),
+          conversationId: nextConversationId,
+          inboundMessageId: nextMessageId,
+          inboundMessage: nextMessage,
+          customerId: nextCustomerId,
+        }),
+      );
+      const openaiCreate = vi.fn().mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "unknown",
+                draftPatch: {},
+                confidence: 0.3,
+              }),
+            },
+          },
+        ],
+      });
+      const extractor = new BookingAgentExtractorService(
+        { chat: { completions: { create: openaiCreate } } } as never,
+        {
+          setContext: vi.fn(),
+          debug: vi.fn(),
+          error: vi.fn(),
+        } as never,
+      );
+      extractorServiceMock.extract.mockImplementation((state: BookingAgentState) =>
+        extractor.extract(state),
+      );
       const responder = new BookingAgentResponderService(
         { messages: { create: vi.fn() } } as never,
         { setContext: vi.fn() } as never,
@@ -598,23 +642,6 @@ describe("BookingAgentTurnService", () => {
       responderServiceMock.generateResponse.mockImplementation((state: BookingAgentState) =>
         responder.generateResponse(state),
       );
-
-      extractorServiceMock.extract
-        .mockResolvedValueOnce({
-          intent: "provide_info",
-          draftPatch: {
-            bookingType: "AIRPORT_PICKUP",
-            pickupDate: "2026-10-30",
-            flightNumber: "BA75",
-            dropoffLocation: "Mason Apartments, Ikoyi",
-          },
-          confidence: 1,
-        })
-        .mockResolvedValueOnce({
-          intent: "provide_info",
-          draftPatch: { vehicleType: "SUV" },
-          confidence: 1,
-        });
 
       let savedState: BookingAgentState | null = null;
       stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
@@ -642,6 +669,7 @@ describe("BookingAgentTurnService", () => {
       expect(firstTurn.response?.text).toContain("vehicle type");
       expect(firstTurn.response?.text).not.toMatch(/one moment|let me check|searching now/i);
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(openaiCreate).toHaveBeenCalledTimes(1);
 
       if (!savedState) {
         throw new Error("Expected the first airport pickup turn to be persisted");
@@ -686,7 +714,12 @@ describe("BookingAgentTurnService", () => {
         },
       ]);
       toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
-        exactMatches: [buildVehicleOption({ id: "airport_suv" })],
+        exactMatches: [
+          buildVehicleOption({
+            id: "airport_suv",
+            imageUrl: "https://cdn.tripdly.com/airport-suv.jpg",
+          }),
+        ],
         alternatives: [],
       });
 
@@ -701,9 +734,27 @@ describe("BookingAgentTurnService", () => {
         "2026-10-30",
       );
       expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledTimes(1);
+      expect(openaiCreate).toHaveBeenCalledTimes(1);
       expect(secondTurn.stage).toBe("presenting_options");
       expect(secondTurn.draft.vehicleType).toBe("SUV");
       expect(secondTurn.response?.text).toContain("Here are your options");
+      expect(secondTurn.outboxItems).toEqual([
+        expect.objectContaining({
+          dedupeKey: "booking-agent:msg_vehicle_type:intro",
+          mode: "FREE_FORM",
+          textBody: expect.stringContaining("Here are your options"),
+        }),
+        expect.objectContaining({
+          dedupeKey: "booking-agent:msg_vehicle_type:vehicle:0",
+          mode: "TEMPLATE",
+          templateName: VEHICLE_CARD_CONTENT_SID,
+          templateVariables: expect.objectContaining({
+            "1": expect.stringContaining("Toyota Prado"),
+            "3": "https://cdn.tripdly.com/airport-suv.jpg",
+            "5": "airport_suv",
+          }),
+        }),
+      ]);
     });
 
     it("triggers search when all required fields collected", async () => {

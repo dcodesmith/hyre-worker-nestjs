@@ -1,4 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { addDays } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
@@ -70,6 +72,9 @@ const VEHICLE_TYPE_REPLIES = {
   crossover: "CROSSOVER",
 } as const;
 
+const AIRPORT_PICKUP_PATTERN =
+  /\b(?:airport\s+(?:pickup|pick-up|transfer)|flight\s+(?:arrival|pickup)|pick\s+me\s+up\s+from\s+the\s+airport)\b/i;
+
 @Injectable()
 export class BookingAgentExtractorService {
   constructor(
@@ -126,7 +131,13 @@ export class BookingAgentExtractorService {
       const content = response.choices[0]?.message.content ?? "";
       const parsed = JSON.parse(content);
       const validated = extractionSchema.parse(parsed);
-      const draftPatch: ExtractionResult["draftPatch"] = { ...validated.draftPatch };
+      const recovered = this.recoverAirportPickupExtraction(
+        inboundMessage,
+        draft,
+        validated.intent,
+        validated.draftPatch,
+      );
+      const draftPatch: ExtractionResult["draftPatch"] = recovered.draftPatch;
       const clarificationPrompt = getDurationUnitClarification(
         inboundMessage,
         draftPatch.bookingType ?? draft.bookingType,
@@ -137,7 +148,7 @@ export class BookingAgentExtractorService {
       }
 
       return {
-        intent: validated.intent,
+        intent: recovered.intent,
         draftPatch,
         selectionHint: validated.selectionHint,
         preferenceHint: validated.preferenceHint,
@@ -159,6 +170,83 @@ export class BookingAgentExtractorService {
       );
       throw new BookingAgentExtractionFailedException(conversationId);
     }
+  }
+
+  private recoverAirportPickupExtraction(
+    inboundMessage: string,
+    currentDraft: BookingAgentState["draft"],
+    intent: ExtractionResult["intent"],
+    modelPatch: ExtractionResult["draftPatch"],
+  ): Pick<ExtractionResult, "intent" | "draftPatch"> {
+    const mentionsAirportPickup = AIRPORT_PICKUP_PATTERN.test(inboundMessage);
+    const isAirportPickup =
+      mentionsAirportPickup ||
+      modelPatch.bookingType === "AIRPORT_PICKUP" ||
+      currentDraft.bookingType === "AIRPORT_PICKUP";
+    if (!isAirportPickup) {
+      return { intent, draftPatch: { ...modelPatch } };
+    }
+
+    const draftPatch: ExtractionResult["draftPatch"] = { ...modelPatch };
+    let recoveredField = false;
+
+    if (mentionsAirportPickup && !draftPatch.bookingType) {
+      draftPatch.bookingType = "AIRPORT_PICKUP";
+      recoveredField = true;
+    }
+
+    if (!draftPatch.flightNumber) {
+      const flightNumber = this.extractFlightNumber(inboundMessage);
+      if (flightNumber) {
+        draftPatch.flightNumber = flightNumber;
+        recoveredField = true;
+      }
+    }
+
+    if (!draftPatch.pickupDate && /\btomorrow\b/i.test(inboundMessage)) {
+      draftPatch.pickupDate = formatInTimeZone(
+        addDays(new Date(), 1),
+        "Africa/Lagos",
+        "yyyy-MM-dd",
+      );
+      recoveredField = true;
+    }
+
+    if (!draftPatch.dropoffLocation) {
+      const dropoffLocation = this.extractAirportDropoffLocation(inboundMessage);
+      if (dropoffLocation) {
+        draftPatch.dropoffLocation = dropoffLocation;
+        recoveredField = true;
+      }
+    }
+
+    const recoveredIntent =
+      recoveredField && (intent === "unknown" || intent === "greeting") ? "provide_info" : intent;
+    return { intent: recoveredIntent, draftPatch };
+  }
+
+  private extractFlightNumber(message: string): string | undefined {
+    const explicitMatch =
+      /\bflight(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/i.exec(
+        message,
+      );
+    const candidates = explicitMatch
+      ? [explicitMatch[1]]
+      : [...message.matchAll(/\b([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/gi)].map((match) => match[1]);
+    for (const value of candidates) {
+      const candidate = value.replaceAll(/\s/g, "").toUpperCase();
+      if (/[A-Z]/.test(candidate)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
+  private extractAirportDropoffLocation(message: string): string | undefined {
+    const match =
+      /\bgoing\s+to\s+(.+?)(?:[.!?]|$)/i.exec(message) ??
+      /\b(?:take\s+me|drop\s+me(?:\s+off)?)\s+(?:to|at)\s+(.+?)(?:[.!?]|$)/i.exec(message);
+    return match?.[1]?.trim().replace(/[,;:\s]+$/, "") || undefined;
   }
 
   private static readonly BUTTON_RESULT_MAP: Record<string, ExtractionResult> = {
