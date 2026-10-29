@@ -9,6 +9,7 @@ import {
   normalizeBookingTimeWindow,
 } from "../../../shared/booking-time-window.helper";
 import { calculateLegCount } from "../../booking/booking.helper";
+import { getMissingRequiredFields } from "../booking-agent.helper";
 import { parseSearchDate } from "../vehicle-search-precondition.policy";
 import { buildAirportTripDetailLines } from "./airport-trip-details";
 import { shouldClarifyCancelIntent } from "./cancel-clarification.policy";
@@ -158,7 +159,8 @@ export class BookingAgentResponderService {
       this.buildFuelSelectionResponse(state) ??
       this.buildCreditsSelectionResponse(state) ??
       this.buildConfirmingResponse(state, error, draft, selectedOption) ??
-      this.buildAwaitingPaymentResponse(stage, paymentLink, holdExpiresAt, selectedOption, draft)
+      this.buildAwaitingPaymentResponse(stage, paymentLink, holdExpiresAt, selectedOption, draft) ??
+      this.buildMissingFieldsFallbackResponse(stage, draft)
     );
   }
 
@@ -208,6 +210,71 @@ export class BookingAgentResponderService {
       return { text: statusMessage };
     }
     return null;
+  }
+
+  private buildMissingFieldsFallbackResponse(
+    stage: BookingStage,
+    draft: BookingDraft,
+  ): AgentResponse | null {
+    if (stage !== "collecting" && stage !== "greeting") {
+      return null;
+    }
+
+    const missingFields = getMissingRequiredFields(draft);
+    if (missingFields.length === 0) {
+      return null;
+    }
+
+    const fieldLabels = this.formatMissingFieldsForUser(missingFields, draft.bookingType);
+    if (!fieldLabels) {
+      return null;
+    }
+
+    const interactive = this.determineInteractive(stage, draft, null, null);
+
+    return {
+      text: `To search for available vehicles, I still need: ${fieldLabels}. Please share these details.`,
+      interactive,
+    };
+  }
+
+  private formatMissingFieldsForUser(
+    missingFields: string[],
+    bookingType: BookingDraft["bookingType"],
+  ): string | null {
+    if (missingFields.length === 0) {
+      return null;
+    }
+
+    const labelMap: Record<string, string> = {
+      pickupDate: bookingType === "AIRPORT_PICKUP" ? "flight date" : "pickup date",
+      bookingType: "booking type (Day, Night, Full Day, or Airport Pickup)",
+      vehicleType: "vehicle type (Sedan, SUV, Van, or Crossover)",
+      pickupLocation: "pickup location",
+      pickupTime: "pickup time",
+      dropoffDate: "drop-off date",
+      dropoffLocation:
+        bookingType === "AIRPORT_PICKUP" ? "destination address" : "drop-off location",
+      flightNumber: "flight number",
+    };
+
+    const labels = missingFields
+      .map((field) => labelMap[field])
+      .filter((label): label is string => Boolean(label));
+
+    if (labels.length === 0) {
+      return null;
+    }
+
+    if (labels.length === 1) {
+      return labels[0];
+    }
+
+    if (labels.length === 2) {
+      return `${labels[0]} and ${labels[1]}`;
+    }
+
+    return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
   }
 
   private buildPresentingOptionsResponse(
