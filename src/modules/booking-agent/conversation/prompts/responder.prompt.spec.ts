@@ -34,6 +34,7 @@ describe("responder.prompt contract", () => {
     );
 
     expect(context).toContain("CURRENT STATE: collecting");
+    expect(context).toContain("ROUTER ACTION: none");
     expect(context).toContain("USER INTENT: provide_info");
     expect(context).toContain("MISSING REQUIRED FIELDS:");
     expect(context).toContain("vehicleType");
@@ -49,6 +50,14 @@ describe("responder.prompt contract", () => {
     expect(prompt).toContain(
       "Airport pickup time or airport address (derived from the validated flight)",
     );
+  });
+
+  it("makes router state authoritative for search claims", () => {
+    const prompt = buildResponderSystemPrompt(buildState());
+
+    expect(prompt).toContain("CURRENT STATE and ROUTER ACTION are authoritative");
+    expect(prompt).toContain("An empty MISSING REQUIRED FIELDS list does not prove a search");
+    expect(prompt).toContain("Only say that options were found when CURRENT STATE is");
   });
 
   it("lists only airport required fields when the draft is an airport pickup", () => {

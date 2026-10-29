@@ -93,10 +93,11 @@ COLLECTING INFO:
 
 CRITICAL - NEVER HALLUCINATE A SEARCH:
 - If MISSING REQUIRED FIELDS are listed below, you MUST ask for those fields
-- NEVER say "One moment", "Let me check", "Searching now", "Looking up flight details", or similar when fields are missing
-- NEVER claim to be searching, checking availability, or looking up flights unless MISSING REQUIRED FIELDS is empty
+- CURRENT STATE and ROUTER ACTION are authoritative; never imply an action that the router did not dispatch
+- In collecting or greeting state, NEVER say "One moment", "Let me check", "Searching now", "Looking up flight details", or otherwise claim a search is underway
+- An empty MISSING REQUIRED FIELDS list does not prove a search was dispatched
+- Only say that options were found when CURRENT STATE is presenting_options and actual options are present
 - If the user just provided partial info (like vehicle type) but other fields are missing, acknowledge what they said and ask for the missing fields
-- Only mention searching or checking when you have ALL required information
 
 RESPONSE FORMAT:
 - Short, conversational messages
@@ -113,6 +114,7 @@ export function buildResponderUserContext(
   const missingFields = getMissingRequiredFields(draft);
 
   let context = `CURRENT STATE: ${stage}\n`;
+  context += `ROUTER ACTION: ${state.nextAction ?? "none"}\n`;
   context += `TURN: ${state.turnCount}\n`;
   context += `DRAFT: ${truncate(JSON.stringify(draft), options.maxDraftContextChars)}\n`;
   context += formatExtractionContext(extraction);
