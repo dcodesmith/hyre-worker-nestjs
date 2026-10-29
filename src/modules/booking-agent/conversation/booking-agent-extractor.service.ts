@@ -187,66 +187,32 @@ export class BookingAgentExtractorService {
       return { intent, draftPatch: { ...modelPatch } };
     }
 
-    const draftPatch: ExtractionResult["draftPatch"] = { ...modelPatch };
-    let recoveredField = false;
+    const flightNumber =
+      /\bflight(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/i
+        .exec(inboundMessage)?.[1]
+        ?.replaceAll(/\s/g, "")
+        .toUpperCase();
+    const dropoffMatch =
+      /\bgoing\s+to\s+(.+?)(?:[.!?]|$)/i.exec(inboundMessage) ??
+      /\b(?:take\s+me|drop\s+me(?:\s+off)?)\s+(?:to|at)\s+(.+?)(?:[.!?]|$)/i.exec(inboundMessage);
+    const dropoffLocation = dropoffMatch?.[1]?.trim().replace(/[,;:\s]+$/, "") || undefined;
+    const pickupDate = /\btomorrow\b/i.test(inboundMessage)
+      ? formatInTimeZone(addDays(new Date(), 1), "Africa/Lagos", "yyyy-MM-dd")
+      : undefined;
 
-    if (mentionsAirportPickup && !draftPatch.bookingType) {
-      draftPatch.bookingType = "AIRPORT_PICKUP";
-      recoveredField = true;
-    }
-
-    if (!draftPatch.flightNumber) {
-      const flightNumber = this.extractFlightNumber(inboundMessage);
-      if (flightNumber) {
-        draftPatch.flightNumber = flightNumber;
-        recoveredField = true;
-      }
-    }
-
-    if (!draftPatch.pickupDate && /\btomorrow\b/i.test(inboundMessage)) {
-      draftPatch.pickupDate = formatInTimeZone(
-        addDays(new Date(), 1),
-        "Africa/Lagos",
-        "yyyy-MM-dd",
-      );
-      recoveredField = true;
-    }
-
-    if (!draftPatch.dropoffLocation) {
-      const dropoffLocation = this.extractAirportDropoffLocation(inboundMessage);
-      if (dropoffLocation) {
-        draftPatch.dropoffLocation = dropoffLocation;
-        recoveredField = true;
-      }
-    }
-
-    const recoveredIntent =
-      recoveredField && (intent === "unknown" || intent === "greeting") ? "provide_info" : intent;
-    return { intent: recoveredIntent, draftPatch };
-  }
-
-  private extractFlightNumber(message: string): string | undefined {
-    const explicitMatch =
-      /\bflight(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/i.exec(
-        message,
-      );
-    const candidates = explicitMatch
-      ? [explicitMatch[1]]
-      : [...message.matchAll(/\b([a-z0-9]{2,3}\s?\d{1,4}[a-z]?)\b/gi)].map((match) => match[1]);
-    for (const value of candidates) {
-      const candidate = value.replaceAll(/\s/g, "").toUpperCase();
-      if (/[A-Z]/.test(candidate)) {
-        return candidate;
-      }
-    }
-    return undefined;
-  }
-
-  private extractAirportDropoffLocation(message: string): string | undefined {
-    const match =
-      /\bgoing\s+to\s+(.+?)(?:[.!?]|$)/i.exec(message) ??
-      /\b(?:take\s+me|drop\s+me(?:\s+off)?)\s+(?:to|at)\s+(.+?)(?:[.!?]|$)/i.exec(message);
-    return match?.[1]?.trim().replace(/[,;:\s]+$/, "") || undefined;
+    return {
+      intent:
+        mentionsAirportPickup && (intent === "unknown" || intent === "greeting")
+          ? "provide_info"
+          : intent,
+      draftPatch: {
+        ...modelPatch,
+        ...(mentionsAirportPickup && { bookingType: "AIRPORT_PICKUP" }),
+        ...(!modelPatch.flightNumber && flightNumber && { flightNumber }),
+        ...(!modelPatch.pickupDate && pickupDate && { pickupDate }),
+        ...(!modelPatch.dropoffLocation && dropoffLocation && { dropoffLocation }),
+      },
+    };
   }
 
   private static readonly BUTTON_RESULT_MAP: Record<string, ExtractionResult> = {
