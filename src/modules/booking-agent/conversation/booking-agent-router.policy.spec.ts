@@ -24,6 +24,90 @@ describe("booking-agent-router.policy", () => {
     expect(decision.stage).toBe("searching");
   });
 
+  it.each([
+    {
+      name: "standard booking",
+      draftPatch: {
+        bookingType: "DAY" as const,
+        vehicleType: "SUV" as const,
+        pickupDate: "2026-10-30",
+        pickupTime: "09:00",
+        pickupLocation: "Ikoyi",
+        dropoffDate: "2026-10-30",
+        dropoffLocation: "Lekki",
+      },
+    },
+    {
+      name: "airport pickup",
+      draftPatch: {
+        bookingType: "AIRPORT_PICKUP" as const,
+        vehicleType: "SUV" as const,
+        pickupDate: "2026-10-30",
+        flightNumber: "BA75",
+        dropoffLocation: "Mason Apartments, Ikoyi",
+      },
+    },
+  ])("searches immediately when a new $name contains every required field", ({ draftPatch }) => {
+    const decision = resolveRouteDecision(
+      buildState({
+        extraction: {
+          intent: "new_booking",
+          draftPatch,
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(decision.nextAction).toBe("search");
+    expect(decision.stage).toBe("searching");
+    expect(decision.draft).toEqual({ __clear: true, ...draftPatch });
+  });
+
+  it("keeps collecting when an airport pickup is missing its flight number", () => {
+    const decision = resolveRouteDecision(
+      buildState({
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          vehicleType: "SUV",
+          pickupDate: "2026-10-30",
+          dropoffLocation: "Lekki",
+        },
+        extraction: {
+          intent: "provide_info",
+          draftPatch: { bookingType: "AIRPORT_PICKUP" },
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(decision).toEqual({
+      nextAction: "respond",
+      stage: "collecting",
+    });
+  });
+
+  it("does not search a new airport booking patch without a flight number", () => {
+    const draftPatch = {
+      bookingType: "AIRPORT_PICKUP" as const,
+      vehicleType: "SUV" as const,
+      pickupDate: "2026-10-30",
+      dropoffLocation: "Lekki",
+    };
+    const decision = resolveRouteDecision(
+      buildState({
+        extraction: {
+          intent: "new_booking",
+          draftPatch,
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(decision.nextAction).toBe("respond");
+    expect(decision.stage).toBe("collecting");
+    expect(decision.draft).toEqual({ __clear: true, ...draftPatch });
+  });
+
   it("routes to presenting_options when options already exist", () => {
     const state = buildState({
       draft: {

@@ -106,7 +106,15 @@ BOOKING TYPE MAPPING:
 - "day service", "day booking", "daytime" → bookingType: "DAY"
 - "night service", "night booking", "overnight" → bookingType: "NIGHT"
 - "full day", "24 hours", "round the clock" → bookingType: "FULL_DAY"
-- "airport pickup", "airport transfer", "flight pickup" → bookingType: "AIRPORT_PICKUP"
+- "airport pickup", "airport transfer", "flight pickup", "pick me up from the airport" → bookingType: "AIRPORT_PICKUP"
+
+AIRPORT PICKUP EXTRACTION:
+- An airport pickup request with booking details is provide_info or new_booking, never greeting
+- Extract bookingType, flightNumber, pickupDate (flight date), and dropoffLocation (destination address)
+- DO NOT set pickupLocation for airport pickups - the system derives it from the flight
+- DO NOT set pickupTime for airport pickups - the system derives it from flight arrival time
+- "airport pickup for tomorrow, flight BA75, going to Mason Apartments, Ikoyi" →
+  bookingType: "AIRPORT_PICKUP", pickupDate: "${tomorrowFormatted}", flightNumber: "BA75", dropoffLocation: "Mason Apartments, Ikoyi"
 
 INTENT DETECTION:
 - "hi", "hello", "good morning" → greeting

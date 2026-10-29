@@ -26,6 +26,15 @@ describe("getMissingRequiredFields", () => {
         dropoffLocation: "Victoria Island",
       }),
     ).toEqual([]);
+    expect(
+      getMissingRequiredFields({
+        bookingType: "AIRPORT_PICKUP",
+        pickupDate: "2026-03-01",
+        flightNumber: "  ",
+        vehicleType: "SUV",
+        dropoffLocation: "Victoria Island",
+      }),
+    ).toEqual(["flightNumber"]);
   });
 
   it("keeps the original required fields for other booking types", () => {

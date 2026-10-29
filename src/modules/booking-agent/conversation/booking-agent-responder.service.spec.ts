@@ -43,11 +43,21 @@ describe("BookingAgentResponderService", () => {
     vi.unstubAllEnvs();
   });
 
+  const completeDraft = {
+    bookingType: "DAY" as const,
+    pickupDate: "2026-03-01",
+    dropoffDate: "2026-03-02",
+    pickupTime: "09:00",
+    pickupLocation: "Victoria Island, Lagos",
+    dropoffLocation: "Victoria Island, Lagos",
+    vehicleType: "SUV" as const,
+  };
+
   describe("generateResponse", () => {
     it("throws on API error", async () => {
       claudeMock.messages.create.mockRejectedValue(new Error("API timeout"));
 
-      const state = buildState();
+      const state = buildState({ draft: completeDraft });
 
       await expect(service.generateResponse(state)).rejects.toThrow();
     });
@@ -57,7 +67,7 @@ describe("BookingAgentResponderService", () => {
         content: [{ type: "thinking", thinking: "Internal reasoning", signature: "signature" }],
       });
 
-      const state = buildState();
+      const state = buildState({ draft: completeDraft });
 
       await expect(service.generateResponse(state)).rejects.toThrow();
     });
@@ -103,6 +113,7 @@ describe("BookingAgentResponderService", () => {
       });
 
       const state = buildState({
+        draft: completeDraft,
         messages: [
           { role: "user", content: "Hi", timestamp: "2026-02-27T10:00:00Z" },
           { role: "assistant", content: "Hello!", timestamp: "2026-02-27T10:00:01Z" },
@@ -141,7 +152,7 @@ describe("BookingAgentResponderService", () => {
         timestamp: new Date().toISOString(),
       }));
 
-      const state = buildState({ messages });
+      const state = buildState({ draft: completeDraft, messages });
 
       await service.generateResponse(state);
 
@@ -715,7 +726,7 @@ describe("BookingAgentResponderService", () => {
       expect(response.interactive).toBeUndefined();
     });
 
-    it("returns no interactive for greeting stage", async () => {
+    it("uses the model welcome response for greeting stage", async () => {
       claudeMock.messages.create.mockResolvedValue({ content: [{ type: "text", text: "Hello!" }] });
 
       const state = buildState({
@@ -724,7 +735,9 @@ describe("BookingAgentResponderService", () => {
 
       const response = await service.generateResponse(state);
 
+      expect(response.text).toBe("Hello!");
       expect(response.interactive).toBeUndefined();
+      expect(claudeMock.messages.create).toHaveBeenCalledOnce();
     });
 
     it("returns no interactive for empty options in presenting_options", async () => {
@@ -782,11 +795,7 @@ describe("BookingAgentResponderService", () => {
       claudeMock.messages.create.mockResolvedValue({ content: [{ type: "text", text: "Got it" }] });
 
       const state = buildState({
-        draft: {
-          bookingType: "DAY",
-          pickupDate: "2026-03-01",
-          pickupLocation: "Victoria Island",
-        },
+        draft: completeDraft,
       });
 
       await service.generateResponse(state);
@@ -804,6 +813,7 @@ describe("BookingAgentResponderService", () => {
       });
 
       const state = buildState({
+        draft: completeDraft,
         extraction: {
           intent: "ask_question",
           draftPatch: {},
@@ -830,6 +840,7 @@ describe("BookingAgentResponderService", () => {
       ];
 
       const state = buildState({
+        draft: completeDraft,
         availableOptions: options,
       });
 
@@ -846,13 +857,121 @@ describe("BookingAgentResponderService", () => {
         content: [{ type: "text", text: "Response" }],
       });
 
-      const state = buildState({ turnCount: 5 });
+      const state = buildState({ draft: completeDraft, turnCount: 5 });
 
       await service.generateResponse(state);
 
       const callArgs = claudeMock.messages.create.mock.calls[0][0].messages;
       const userContext = callArgs.find((m: { role: string }) => m.role === "user");
       expect(userContext.content).toContain("TURN: 5");
+    });
+  });
+
+  describe("missing fields fallback", () => {
+    it("returns deterministic response when collecting with missing fields", async () => {
+      const state = buildState({
+        stage: "collecting",
+        draft: {
+          bookingType: "DAY",
+          vehicleType: "SUV",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("To search for available vehicles");
+      expect(response.text).toContain("pickup date");
+      expect(response.text).toContain("pickup location");
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
+    });
+
+    it("returns deterministic response for airport pickup with missing fields", async () => {
+      const state = buildState({
+        stage: "collecting",
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          vehicleType: "SUV",
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).toContain("To search for available vehicles");
+      expect(response.text).toContain("flight date");
+      expect(response.text).toContain("flight number");
+      expect(response.text).toContain("destination address");
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
+    });
+
+    it("asks for the flight number when it is the only missing airport field", async () => {
+      const response = await service.generateResponse(
+        buildState({
+          stage: "collecting",
+          draft: {
+            bookingType: "AIRPORT_PICKUP",
+            vehicleType: "SUV",
+            pickupDate: "2026-10-30",
+            dropoffLocation: "Lekki",
+          },
+        }),
+      );
+
+      expect(response.text).toContain("flight number");
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
+    });
+
+    it("does not trigger fallback when all required fields are present", async () => {
+      claudeMock.messages.create.mockResolvedValue({
+        content: [{ type: "text", text: "Response from Claude" }],
+      });
+
+      const state = buildState({
+        stage: "collecting",
+        draft: completeDraft,
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(claudeMock.messages.create).toHaveBeenCalled();
+      expect(response.text).toBe("Response from Claude");
+    });
+
+    it("includes booking type buttons when collecting without booking type", async () => {
+      const state = buildState({
+        stage: "collecting",
+        draft: {},
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.interactive?.type).toBe("buttons");
+      expect(response.interactive?.buttons).toHaveLength(3);
+      expect(response.interactive?.buttons?.[0].id).toBe("day");
+      expect(response.interactive?.buttons?.[1].id).toBe("night");
+      expect(response.interactive?.buttons?.[2].id).toBe("fullday");
+    });
+
+    it("prevents hallucinating a search when fields are missing (airport pickup bug scenario)", async () => {
+      const state = buildState({
+        stage: "collecting",
+        draft: {
+          vehicleType: "SUV",
+        },
+        inboundMessage: "SUV",
+        extraction: {
+          intent: "provide_info",
+          draftPatch: { vehicleType: "SUV" },
+          confidence: 0.9,
+        },
+      });
+
+      const response = await service.generateResponse(state);
+
+      expect(response.text).not.toContain("One moment");
+      expect(response.text).not.toContain("checking flight");
+      expect(response.text).not.toContain("searching");
+      expect(response.text).toContain("To search for available vehicles");
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
   });
 });

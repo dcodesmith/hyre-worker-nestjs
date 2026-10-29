@@ -36,6 +36,7 @@ describe("BookingAgentExtractorService", () => {
   afterEach(async () => {
     await moduleRef?.close();
     vi.resetAllMocks();
+    vi.useRealTimers();
   });
 
   describe("extract - interactive replies", () => {
@@ -376,8 +377,58 @@ describe("BookingAgentExtractorService", () => {
 
       expect(result.intent).toBe("greeting");
       expect(result.confidence).toBe(0.95);
-      expect(openaiMock.chat.completions.create).toHaveBeenCalled();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
     });
+
+    it.each([
+      {
+        name: "standard booking",
+        inboundMessage: "Hi, I need an SUV day booking tomorrow at 9am from Ikoyi to Lekki",
+        draftPatch: {
+          bookingType: "DAY" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          pickupTime: "09:00",
+          pickupLocation: "Ikoyi",
+          dropoffDate: "2026-10-30",
+          dropoffLocation: "Lekki",
+        },
+      },
+      {
+        name: "airport booking",
+        inboundMessage: "Hi, I need an SUV from the airport tomorrow, flight BA75, to Lekki",
+        draftPatch: {
+          bookingType: "AIRPORT_PICKUP" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          flightNumber: "BA75",
+          dropoffLocation: "Lekki",
+        },
+      },
+    ])(
+      "keeps details when a $name is mislabeled as greeting",
+      async ({ inboundMessage, draftPatch }) => {
+        openaiMock.chat.completions.create.mockResolvedValue({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "greeting",
+                  draftPatch,
+                  confidence: 0.8,
+                }),
+              },
+            },
+          ],
+        });
+
+        const result = await service.extract(buildState({ inboundMessage }));
+
+        expect(result.intent).toBe("provide_info");
+        expect(result.draftPatch).toEqual(draftPatch);
+        expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
+      },
+    );
 
     it("extracts booking info from message", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
@@ -410,6 +461,203 @@ describe("BookingAgentExtractorService", () => {
       expect(result.draftPatch.pickupDate).toBe("2026-03-01");
       expect(result.draftPatch.pickupTime).toBe("09:00");
       expect(result.draftPatch.pickupLocation).toBe("Victoria Island");
+    });
+
+    it("retries the incident airport extraction when booking type is omitted", async () => {
+      openaiMock.chat.completions.create
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "greeting",
+                  draftPatch: { flightNumber: "BA75" },
+                  confidence: 0.3,
+                }),
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "provide_info",
+                  draftPatch: {
+                    bookingType: "AIRPORT_PICKUP",
+                    pickupDate: "2026-10-30",
+                    flightNumber: "BA75",
+                    dropoffLocation: "Mason Apartments, Ikoyi",
+                  },
+                  confidence: 0.95,
+                }),
+              },
+            },
+          ],
+        });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage:
+            "airport pickup for tomorrow, flight BA75, going to Mason Apartments, Ikoyi",
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch).toEqual({
+        bookingType: "AIRPORT_PICKUP",
+        pickupDate: "2026-10-30",
+        flightNumber: "BA75",
+        dropoffLocation: "Mason Apartments, Ikoyi",
+      });
+      expect(result.draftPatch.pickupLocation).toBeUndefined();
+      expect(result.draftPatch.pickupTime).toBeUndefined();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
+      expect(openaiMock.chat.completions.create.mock.calls[1][0].messages[0]?.content).toContain(
+        "extraction was incomplete",
+      );
+    });
+
+    it("uses the initial extraction when the airport retry fails", async () => {
+      openaiMock.chat.completions.create
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "provide_info",
+                  draftPatch: { flightNumber: "BA75" },
+                  confidence: 0.7,
+                }),
+              },
+            },
+          ],
+        })
+        .mockRejectedValueOnce(new Error("retry unavailable"));
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "airport pickup, flight BA75",
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch).toEqual({ flightNumber: "BA75" });
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries an airport extraction when the flight number is still missing", async () => {
+      const incompleteExtraction = {
+        intent: "provide_info",
+        draftPatch: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-10-30",
+          vehicleType: "SUV",
+          dropoffLocation: "Lekki",
+        },
+        confidence: 0.9,
+      };
+      openaiMock.chat.completions.create
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: JSON.stringify(incompleteExtraction) } }],
+        })
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: JSON.stringify(incompleteExtraction) } }],
+        });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "Airport pickup tomorrow in an SUV to Lekki",
+        }),
+      );
+
+      expect(result.draftPatch.bookingType).toBe("AIRPORT_PICKUP");
+      expect(result.draftPatch.flightNumber).toBeUndefined();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
+    });
+
+    it("preserves an explicit day booking from the airport without retrying", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  bookingType: "DAY",
+                  pickupDate: "2026-10-30",
+                  pickupTime: "09:00",
+                  pickupLocation: "Murtala Muhammed International Airport",
+                },
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "Day booking from the airport tomorrow at 9am",
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.bookingType).toBe("DAY");
+      expect(result.draftPatch.pickupTime).toBe("09:00");
+      expect(result.draftPatch.pickupLocation).toBe("Murtala Muhammed International Airport");
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
+    });
+
+    it("does not retry airport control intents", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "cancel",
+                draftPatch: {},
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({ inboundMessage: "Cancel the airport pickup" }),
+      );
+
+      expect(result.intent).toBe("cancel");
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
+    });
+
+    it("does not override an explicit model correction away from airport pickup", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "update_info",
+                draftPatch: { bookingType: "DAY" },
+                confidence: 0.9,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "Change the airport pickup to a day booking",
+          draft: { bookingType: "AIRPORT_PICKUP" },
+        }),
+      );
+
+      expect(result.intent).toBe("update_info");
+      expect(result.draftPatch.bookingType).toBe("DAY");
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
     });
 
     it("requests clarification for conflicting booking type and duration units", async () => {

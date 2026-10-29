@@ -257,6 +257,55 @@ describe("WhatsAppProcessor", () => {
     );
   });
 
+  it("enqueues both the options intro and vehicle card returned by the booking turn", async () => {
+    persistenceService.acquireProcessingLock.mockResolvedValue(true);
+    persistenceService.getInboundMessageContext.mockResolvedValue({
+      id: "msg-vehicle-type",
+      conversationId: "conv-airport",
+      body: "SUV",
+      kind: WhatsAppMessageKind.TEXT,
+      mediaUrl: null,
+      mediaContentType: null,
+      rawPayload: {},
+      conversation: { windowExpiresAt: new Date("2026-10-29T10:00:00.000Z") },
+    });
+    const intro = {
+      conversationId: "conv-airport",
+      dedupeKey: "booking-agent:msg-vehicle-type:intro",
+      mode: WhatsAppDeliveryMode.FREE_FORM,
+      textBody: "Here are your options! Tap Select on the one you'd like to book.",
+    };
+    const vehicleCard = {
+      conversationId: "conv-airport",
+      dedupeKey: "booking-agent:msg-vehicle-type:vehicle:0",
+      mode: WhatsAppDeliveryMode.TEMPLATE,
+      templateName: "HX43448303892f9f4026057adb597e0c22",
+      templateVariables: {
+        "1": "Toyota Prado · ₦150,000",
+        "2": "₦150,000",
+        "3": "https://cdn.tripdly.com/airport-suv.jpg",
+        "4": "Select",
+        "5": "airport_suv",
+      },
+    };
+    orchestratorService.decide.mockResolvedValue({
+      enqueueOutbox: [intro, vehicleCard],
+      resultingStage: "presenting_options",
+    });
+
+    await processor.process(
+      buildJob(PROCESS_WHATSAPP_INBOUND_JOB, {
+        conversationId: "conv-airport",
+        messageId: "msg-vehicle-type",
+        dedupeKey: "dedupe-vehicle-type",
+      }),
+    );
+
+    expect(senderService.enqueueOutbound).toHaveBeenCalledTimes(2);
+    expect(senderService.enqueueOutbound).toHaveBeenNthCalledWith(1, intro);
+    expect(senderService.enqueueOutbound).toHaveBeenNthCalledWith(2, vehicleCard);
+  });
+
   it("enqueues account-link notification after identity sync returns a pending link", async () => {
     persistenceService.acquireProcessingLock.mockResolvedValue(true);
     persistenceService.synchronizeConversationIdentity.mockResolvedValue({

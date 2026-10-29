@@ -19,7 +19,10 @@ import { BookingAgentExtractorService } from "./booking-agent-extractor.service"
 import { BookingAgentResponderService } from "./booking-agent-responder.service";
 import { BookingAgentStateService } from "./booking-agent-state.service";
 import { BookingAgentTurnService } from "./booking-agent-turn.service";
-import { getBookingAgentServiceUnavailableMessage } from "./conversation.const";
+import {
+  getBookingAgentServiceUnavailableMessage,
+  VEHICLE_CARD_CONTENT_SID,
+} from "./conversation.const";
 import { buildPricingPreview, buildVehicleOption } from "./conversation.factory";
 import type { BookingAgentState } from "./conversation.interface";
 import { createDefaultLocationValidationState } from "./conversation.interface";
@@ -64,6 +67,15 @@ describe("BookingAgentTurnService", () => {
   };
   let googlePlacesServiceMock: {
     validateAddress: ReturnType<typeof vi.fn>;
+  };
+  let flightAwareServiceMock: {
+    searchAirportPickupFlight: ReturnType<typeof vi.fn>;
+  };
+  let mapsServiceMock: {
+    calculateAirportTripDuration: ReturnType<typeof vi.fn>;
+  };
+  let bookingLegServiceMock: {
+    generateLegs: ReturnType<typeof vi.fn>;
   };
   let whatsAppPersistenceServiceMock: {
     getConversationLinkState: ReturnType<typeof vi.fn>;
@@ -166,6 +178,15 @@ describe("BookingAgentTurnService", () => {
         normalizedAddress: "Victoria Island, Lagos, Nigeria",
       }),
     };
+    flightAwareServiceMock = {
+      searchAirportPickupFlight: vi.fn(),
+    };
+    mapsServiceMock = {
+      calculateAirportTripDuration: vi.fn(),
+    };
+    bookingLegServiceMock = {
+      generateLegs: vi.fn(),
+    };
 
     bookingReservationExpirationServiceMock = {
       reconcileExpiredReservation: vi.fn().mockResolvedValue("retained"),
@@ -199,9 +220,9 @@ describe("BookingAgentTurnService", () => {
         { provide: DatabaseService, useValue: databaseServiceMock },
         { provide: WhatsAppPersistenceService, useValue: whatsAppPersistenceServiceMock },
         { provide: GooglePlacesService, useValue: googlePlacesServiceMock },
-        { provide: FlightAwareService, useValue: { searchAirportPickupFlight: vi.fn() } },
-        { provide: MapsService, useValue: { calculateAirportTripDuration: vi.fn() } },
-        { provide: BookingLegService, useValue: { generateLegs: vi.fn() } },
+        { provide: FlightAwareService, useValue: flightAwareServiceMock },
+        { provide: MapsService, useValue: mapsServiceMock },
+        { provide: BookingLegService, useValue: bookingLegServiceMock },
         ExtractAction,
         MergeAction,
         RouteAction,
@@ -229,6 +250,7 @@ describe("BookingAgentTurnService", () => {
     await moduleRef?.close();
     vi.resetAllMocks();
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   describe("invoke", () => {
@@ -465,7 +487,123 @@ describe("BookingAgentTurnService", () => {
       });
 
       expect(result.stage).toBe("greeting");
+      expect(result.draft).toEqual({});
+      expect(result.response?.text).toBe("Hello! How can I help you today?");
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
     });
+
+    it.each([
+      {
+        name: "standard booking",
+        message: "Day booking tomorrow at 9am from Ikoyi to Lekki in an SUV",
+        draftPatch: {
+          bookingType: "DAY" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          pickupTime: "09:00",
+          pickupLocation: "Ikoyi",
+          dropoffDate: "2026-10-30",
+          dropoffLocation: "Lekki",
+        },
+      },
+      {
+        name: "airport booking",
+        message: "SUV from the airport tomorrow, flight BA75, to Lekki",
+        draftPatch: {
+          bookingType: "AIRPORT_PICKUP" as const,
+          vehicleType: "SUV" as const,
+          pickupDate: "2026-10-30",
+          flightNumber: "BA75",
+          dropoffLocation: "Lekki",
+        },
+      },
+    ])(
+      "preserves a plain greeting before later $name details and searches when complete",
+      async ({ message, draftPatch }) => {
+        extractorServiceMock.extract
+          .mockResolvedValueOnce({
+            intent: "greeting",
+            draftPatch: {},
+            confidence: 0.95,
+          })
+          .mockResolvedValueOnce({
+            intent: "provide_info",
+            draftPatch,
+            confidence: 0.95,
+          });
+
+        const greetingTurn = await service.invoke({
+          conversationId,
+          messageId: "msg_greeting",
+          message: "Hello",
+        });
+
+        expect(greetingTurn.stage).toBe("greeting");
+        expect(greetingTurn.draft).toEqual({});
+        expect(greetingTurn.response?.text).toBe("Hello! How can I help you today?");
+        expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+
+        stateServiceMock.loadState.mockResolvedValue(greetingTurn);
+        stateServiceMock.mergeWithExisting.mockImplementation((existing) => ({
+          ...existing,
+          inboundMessage: message,
+          inboundMessageId: "msg_booking_details",
+          response: null,
+          outboxItems: [],
+          extraction: null,
+          nextAction: null,
+        }));
+        toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+          exactMatches: [buildVehicleOption()],
+          alternatives: [],
+        });
+
+        if (draftPatch.bookingType === "AIRPORT_PICKUP") {
+          flightAwareServiceMock.searchAirportPickupFlight.mockResolvedValue({
+            warning: null,
+            flight: {
+              flightNumber: "BA75",
+              destination: "LOS",
+              destinationIATA: "LOS",
+              destinationName: "Murtala Muhammed International Airport",
+              destinationCity: "Lagos",
+              arrivalTime: "2026-10-30T09:00:00.000Z",
+            },
+          });
+          mapsServiceMock.calculateAirportTripDuration.mockResolvedValue({
+            durationMinutes: 45,
+            distanceMeters: 25_000,
+            isEstimate: false,
+          });
+          bookingLegServiceMock.generateLegs.mockReturnValue([
+            {
+              legDate: new Date("2026-10-30T09:40:00.000Z"),
+              legStartTime: new Date("2026-10-30T09:40:00.000Z"),
+              legEndTime: new Date("2026-10-30T10:34:00.000Z"),
+            },
+          ]);
+        }
+
+        const bookingTurn = await service.invoke({
+          conversationId,
+          messageId: "msg_booking_details",
+          message,
+        });
+
+        expect(bookingTurn.draft.bookingType).toBe(draftPatch.bookingType);
+        expect(bookingTurn.draft.vehicleType).toBe(draftPatch.vehicleType);
+        expect(bookingTurn.draft.pickupDate).toBe(draftPatch.pickupDate);
+        expect(bookingTurn.draft.dropoffLocation).toBe("Victoria Island, Lagos, Nigeria");
+        if (draftPatch.bookingType === "AIRPORT_PICKUP") {
+          expect(bookingTurn.draft.flightNumber).toBe(draftPatch.flightNumber);
+        } else {
+          expect(bookingTurn.draft.pickupTime).toBe(draftPatch.pickupTime);
+          expect(bookingTurn.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
+        }
+        expect(bookingTurn.stage).toBe("presenting_options");
+        expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledTimes(1);
+      },
+    );
 
     it("clears stale booking state when greeting from awaiting_payment stage", async () => {
       const existingState = buildInitialState();
@@ -570,6 +708,190 @@ describe("BookingAgentTurnService", () => {
       expect(result.draft.bookingType).toBe("DAY");
       expect(result.draft.pickupDate).toBe("2026-03-01");
       expect(result.draft.pickupLocation).toBe("Victoria Island, Lagos, Nigeria");
+    });
+
+    it("replays the airport pickup request and dispatches search after the SUV reply", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-29T09:34:00.000Z"));
+      stateServiceMock.createInitialState.mockImplementation(
+        (
+          nextConversationId: string,
+          nextMessageId: string,
+          nextMessage: string,
+          nextCustomerId: string | null,
+        ) => ({
+          ...buildInitialState(),
+          conversationId: nextConversationId,
+          inboundMessageId: nextMessageId,
+          inboundMessage: nextMessage,
+          customerId: nextCustomerId,
+        }),
+      );
+      const openaiCreate = vi
+        .fn()
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "greeting",
+                  draftPatch: { flightNumber: "BA75" },
+                  confidence: 0.3,
+                }),
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "provide_info",
+                  draftPatch: {
+                    bookingType: "AIRPORT_PICKUP",
+                    pickupDate: "2026-10-30",
+                    flightNumber: "BA75",
+                    dropoffLocation: "Mason Apartments, Ikoyi",
+                  },
+                  confidence: 0.95,
+                }),
+              },
+            },
+          ],
+        });
+      const extractor = new BookingAgentExtractorService(
+        { chat: { completions: { create: openaiCreate } } } as never,
+        {
+          setContext: vi.fn(),
+          debug: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+        } as never,
+      );
+      extractorServiceMock.extract.mockImplementation((state: BookingAgentState) =>
+        extractor.extract(state),
+      );
+      const responder = new BookingAgentResponderService(
+        { messages: { create: vi.fn() } } as never,
+        { setContext: vi.fn() } as never,
+      );
+      responderServiceMock.generateResponse.mockImplementation((state: BookingAgentState) =>
+        responder.generateResponse(state),
+      );
+
+      let savedState: BookingAgentState | null = null;
+      stateServiceMock.saveState.mockImplementation((_id: string, state: BookingAgentState) => {
+        savedState = state;
+        return Promise.resolve();
+      });
+
+      const firstTurn = await service.invoke({
+        conversationId,
+        messageId: "msg_airport_details",
+        message: "airport pickup for tomorrow, flight BA75, going to Mason Apartments, Ikoyi",
+      });
+
+      expect(firstTurn.stage).toBe("collecting");
+      expect(firstTurn.draft).toEqual(
+        expect.objectContaining({
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-10-30",
+          flightNumber: "BA75",
+          dropoffLocation: "Mason Apartments, Ikoyi",
+        }),
+      );
+      expect(firstTurn.draft.pickupLocation).toBeUndefined();
+      expect(firstTurn.draft.pickupTime).toBeUndefined();
+      expect(firstTurn.response?.text).toContain("vehicle type");
+      expect(firstTurn.response?.text).not.toMatch(/one moment|let me check|searching now/i);
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+      expect(openaiCreate).toHaveBeenCalledTimes(2);
+
+      if (!savedState) {
+        throw new Error("Expected the first airport pickup turn to be persisted");
+      }
+      const stateAfterFirstTurn: BookingAgentState = savedState;
+      stateServiceMock.loadState.mockResolvedValue(stateAfterFirstTurn);
+      stateServiceMock.mergeWithExisting.mockImplementation((existing) => ({
+        ...existing,
+        inboundMessage: "SUV",
+        inboundMessageId: "msg_vehicle_type",
+        response: null,
+        outboxItems: [],
+        extraction: null,
+        nextAction: null,
+      }));
+
+      googlePlacesServiceMock.validateAddress.mockResolvedValue({
+        isValid: true,
+        normalizedAddress: "Mason Apartments, Ikoyi, Lagos, Nigeria",
+      });
+      flightAwareServiceMock.searchAirportPickupFlight.mockResolvedValue({
+        warning: null,
+        flight: {
+          flightNumber: "BA75",
+          destination: "LOS",
+          destinationIATA: "LOS",
+          destinationName: "Murtala Muhammed International Airport",
+          destinationCity: "Lagos",
+          arrivalTime: "2026-10-30T09:00:00.000Z",
+        },
+      });
+      mapsServiceMock.calculateAirportTripDuration.mockResolvedValue({
+        durationMinutes: 45,
+        distanceMeters: 25_000,
+        isEstimate: false,
+      });
+      bookingLegServiceMock.generateLegs.mockReturnValue([
+        {
+          legDate: new Date("2026-10-30T09:40:00.000Z"),
+          legStartTime: new Date("2026-10-30T09:40:00.000Z"),
+          legEndTime: new Date("2026-10-30T10:34:00.000Z"),
+        },
+      ]);
+      toolExecutorServiceMock.searchVehiclesFromExtracted.mockResolvedValue({
+        exactMatches: [
+          buildVehicleOption({
+            id: "airport_suv",
+            imageUrl: "https://cdn.tripdly.com/airport-suv.jpg",
+          }),
+        ],
+        alternatives: [],
+      });
+
+      const secondTurn = await service.invoke({
+        conversationId,
+        messageId: "msg_vehicle_type",
+        message: "SUV",
+      });
+
+      expect(flightAwareServiceMock.searchAirportPickupFlight).toHaveBeenCalledWith(
+        "BA75",
+        "2026-10-30",
+      );
+      expect(toolExecutorServiceMock.searchVehiclesFromExtracted).toHaveBeenCalledTimes(1);
+      expect(openaiCreate).toHaveBeenCalledTimes(2);
+      expect(secondTurn.stage).toBe("presenting_options");
+      expect(secondTurn.draft.vehicleType).toBe("SUV");
+      expect(secondTurn.response?.text).toContain("Here are your options");
+      expect(secondTurn.outboxItems).toEqual([
+        expect.objectContaining({
+          dedupeKey: "booking-agent:msg_vehicle_type:intro",
+          mode: "FREE_FORM",
+          textBody: expect.stringContaining("Here are your options"),
+        }),
+        expect.objectContaining({
+          dedupeKey: "booking-agent:msg_vehicle_type:vehicle:0",
+          mode: "TEMPLATE",
+          templateName: VEHICLE_CARD_CONTENT_SID,
+          templateVariables: expect.objectContaining({
+            "1": expect.stringContaining("Toyota Prado"),
+            "3": "https://cdn.tripdly.com/airport-suv.jpg",
+            "5": "airport_suv",
+          }),
+        }),
+      ]);
     });
 
     it("triggers search when all required fields collected", async () => {

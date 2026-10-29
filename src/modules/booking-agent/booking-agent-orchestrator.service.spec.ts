@@ -141,6 +141,53 @@ describe("BookingAgentOrchestratorService", () => {
     expect(windowPolicyService.resolveOutboundMode).not.toHaveBeenCalled();
   });
 
+  it("preserves both the vehicle-options intro and card for outbound delivery", async () => {
+    bookingAgentService.invoke.mockResolvedValue({
+      outboxItems: [
+        {
+          conversationId: "conv_1",
+          dedupeKey: "booking-agent:msg_1:intro",
+          mode: WhatsAppDeliveryMode.FREE_FORM,
+          textBody: "Here are your options! Tap Select on the one you'd like to book.",
+        },
+        {
+          conversationId: "conv_1",
+          dedupeKey: "booking-agent:msg_1:vehicle:0",
+          mode: WhatsAppDeliveryMode.TEMPLATE,
+          templateName: "HX43448303892f9f4026057adb597e0c22",
+          templateVariables: {
+            "1": "Toyota Prado · ₦150,000",
+            "2": "₦150,000",
+            "3": "https://cdn.tripdly.com/airport-suv.jpg",
+            "4": "Select",
+            "5": "airport_suv",
+          },
+        },
+      ],
+      response: { text: "Here are your options" },
+      stage: "presenting_options",
+      draft: { bookingType: "AIRPORT_PICKUP", vehicleType: "SUV" },
+      error: null,
+    });
+
+    const result = await service.decide(buildContext({ body: "SUV" }));
+
+    expect(result.enqueueOutbox).toHaveLength(2);
+    expect(result.enqueueOutbox[0]).toEqual(
+      expect.objectContaining({
+        dedupeKey: "booking-agent:msg_1:intro",
+        mode: WhatsAppDeliveryMode.FREE_FORM,
+      }),
+    );
+    expect(result.enqueueOutbox[1]).toEqual(
+      expect.objectContaining({
+        dedupeKey: "booking-agent:msg_1:vehicle:0",
+        mode: WhatsAppDeliveryMode.TEMPLATE,
+        templateName: "HX43448303892f9f4026057adb597e0c22",
+      }),
+    );
+  });
+
   it("strips invalid template names and never enqueues TEMPLATE without an HX SID", async () => {
     windowPolicyService.resolveOutboundMode.mockReturnValue(WhatsAppDeliveryMode.TEMPLATE);
     bookingAgentService.invoke.mockResolvedValue({

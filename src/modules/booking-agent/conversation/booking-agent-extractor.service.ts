@@ -3,7 +3,7 @@ import { PinoLogger } from "nestjs-pino";
 import { z } from "zod";
 import { OPENAI_SDK_CLIENT, type OpenAiSdkClient } from "../../openai-sdk/openai-sdk.tokens";
 import { getMissingRequiredFields } from "../booking-agent.helper";
-import { getDurationUnitClarification } from "./booking-rules";
+import { getDurationUnitClarification, shouldApplyDraftPatch } from "./booking-rules";
 import {
   isAgentRequestControl,
   isBareCancelControl,
@@ -24,6 +24,7 @@ import type {
   BookingAgentState,
   ExtractionResult,
   InteractiveReply,
+  UserIntent,
 } from "./conversation.interface";
 import { buildExtractorSystemPrompt } from "./prompts/extractor.prompt";
 
@@ -70,6 +71,33 @@ const VEHICLE_TYPE_REPLIES = {
   crossover: "CROSSOVER",
 } as const;
 
+const AIRPORT_PICKUP_PHRASES = [
+  "airport pickup",
+  "airport pick-up",
+  "airport pick up",
+  "airport transfer",
+  "flight pickup",
+  "from the airport",
+];
+const NON_AIRPORT_BOOKING_PHRASES = [
+  "day booking",
+  "day service",
+  "night booking",
+  "night service",
+  "full day",
+  "24 hours",
+  "round the clock",
+];
+const AIRPORT_RETRYABLE_INTENTS = new Set<UserIntent>([
+  "greeting",
+  "unknown",
+  "provide_info",
+  "update_info",
+  "new_booking",
+]);
+const AIRPORT_EXTRACTION_RETRY_MESSAGE =
+  'The message may request an airport pickup, but the extraction was incomplete. Re-extract every explicit booking detail with intent "provide_info", not "greeting". Preserve an explicit DAY, NIGHT, or FULL_DAY booking type, pickup location, and pickup time. Otherwise, for an explicit airport pickup, set bookingType to "AIRPORT_PICKUP", use pickupDate for the flight date, flightNumber for the flight, and dropoffLocation for the destination address; do not set pickupLocation or pickupTime.';
+
 @Injectable()
 export class BookingAgentExtractorService {
   constructor(
@@ -107,26 +135,80 @@ export class BookingAgentExtractorService {
         stage,
         messages,
       });
-      const response = await this.openai.chat.completions.create(
-        {
-          model: BOOKING_AGENT_EXTRACTION_MODEL,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: inboundMessage },
-          ],
-          response_format: { type: "json_object" },
-        },
-        {
-          timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
-          maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
-        },
+      const normalizedMessage = inboundMessage.toLowerCase();
+      const isAirportPickupRequest = AIRPORT_PICKUP_PHRASES.some((phrase) =>
+        normalizedMessage.includes(phrase),
       );
+      const hasExplicitNonAirportBookingType = NON_AIRPORT_BOOKING_PHRASES.some((phrase) =>
+        normalizedMessage.includes(phrase),
+      );
+      const requestExtraction = (prompt: string) =>
+        this.openai.chat.completions.create(
+          {
+            model: BOOKING_AGENT_EXTRACTION_MODEL,
+            messages: [
+              { role: "system", content: prompt },
+              { role: "user", content: inboundMessage },
+            ],
+            response_format: { type: "json_object" },
+          },
+          {
+            timeout: BOOKING_AGENT_MODEL_TIMEOUT_MS,
+            maxRetries: BOOKING_AGENT_MODEL_MAX_RETRIES,
+          },
+        );
+      const response = await requestExtraction(systemPrompt);
+      const content = response.choices[0]?.message.content ?? "";
+      let validated = extractionSchema.parse(JSON.parse(content));
       this.logger.debug({ conversationId }, "Extraction response received");
 
-      const content = response.choices[0]?.message.content ?? "";
-      const parsed = JSON.parse(content);
-      const validated = extractionSchema.parse(parsed);
+      const hasModelNonAirportBookingType =
+        validated.draftPatch.bookingType !== undefined &&
+        validated.draftPatch.bookingType !== "AIRPORT_PICKUP";
+      const airportDraft = { ...draft, ...validated.draftPatch };
+      const missingAirportFields = getMissingRequiredFields(airportDraft);
+      const hasMissingAirportSourceField =
+        airportDraft.bookingType === "AIRPORT_PICKUP" &&
+        missingAirportFields.some((field) =>
+          ["pickupDate", "flightNumber", "dropoffLocation"].includes(field),
+        );
+      if (
+        isAirportPickupRequest &&
+        !hasExplicitNonAirportBookingType &&
+        !hasModelNonAirportBookingType &&
+        AIRPORT_RETRYABLE_INTENTS.has(validated.intent) &&
+        (!validated.draftPatch.bookingType ||
+          (validated.intent !== "greeting" && !shouldApplyDraftPatch(validated.intent)) ||
+          hasMissingAirportSourceField)
+      ) {
+        this.logger.warn({ conversationId }, "Retrying incomplete airport pickup extraction");
+        try {
+          const retryResponse = await requestExtraction(
+            `${systemPrompt}\n\n${AIRPORT_EXTRACTION_RETRY_MESSAGE}`,
+          );
+          const retryContent = retryResponse.choices[0]?.message.content ?? "";
+          validated = extractionSchema.parse(JSON.parse(retryContent));
+        } catch (error) {
+          this.logger.warn(
+            {
+              conversationId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            "Airport pickup extraction retry failed; using initial extraction",
+          );
+        }
+      }
+
       const draftPatch: ExtractionResult["draftPatch"] = { ...validated.draftPatch };
+      const intent =
+        Object.keys(draftPatch).length > 0 &&
+        (validated.intent === "greeting" ||
+          (isAirportPickupRequest &&
+            !hasExplicitNonAirportBookingType &&
+            AIRPORT_RETRYABLE_INTENTS.has(validated.intent) &&
+            !shouldApplyDraftPatch(validated.intent)))
+          ? "provide_info"
+          : validated.intent;
       const clarificationPrompt = getDurationUnitClarification(
         inboundMessage,
         draftPatch.bookingType ?? draft.bookingType,
@@ -137,7 +219,7 @@ export class BookingAgentExtractorService {
       }
 
       return {
-        intent: validated.intent,
+        intent,
         draftPatch,
         selectionHint: validated.selectionHint,
         preferenceHint: validated.preferenceHint,
