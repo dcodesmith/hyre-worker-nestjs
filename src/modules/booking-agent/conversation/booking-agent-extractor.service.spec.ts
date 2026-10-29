@@ -547,6 +547,92 @@ describe("BookingAgentExtractorService", () => {
       expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
     });
 
+    it("retries an airport extraction when the flight number is still missing", async () => {
+      const incompleteExtraction = {
+        intent: "provide_info",
+        draftPatch: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-10-30",
+          vehicleType: "SUV",
+          dropoffLocation: "Lekki",
+        },
+        confidence: 0.9,
+      };
+      openaiMock.chat.completions.create
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: JSON.stringify(incompleteExtraction) } }],
+        })
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: JSON.stringify(incompleteExtraction) } }],
+        });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "Airport pickup tomorrow in an SUV to Lekki",
+        }),
+      );
+
+      expect(result.draftPatch.bookingType).toBe("AIRPORT_PICKUP");
+      expect(result.draftPatch.flightNumber).toBeUndefined();
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledTimes(2);
+    });
+
+    it("preserves an explicit day booking from the airport without retrying", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "provide_info",
+                draftPatch: {
+                  bookingType: "DAY",
+                  pickupDate: "2026-10-30",
+                  pickupTime: "09:00",
+                  pickupLocation: "Murtala Muhammed International Airport",
+                },
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({
+          inboundMessage: "Day booking from the airport tomorrow at 9am",
+        }),
+      );
+
+      expect(result.intent).toBe("provide_info");
+      expect(result.draftPatch.bookingType).toBe("DAY");
+      expect(result.draftPatch.pickupTime).toBe("09:00");
+      expect(result.draftPatch.pickupLocation).toBe("Murtala Muhammed International Airport");
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
+    });
+
+    it("does not retry airport control intents", async () => {
+      openaiMock.chat.completions.create.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                intent: "cancel",
+                draftPatch: {},
+                confidence: 0.95,
+              }),
+            },
+          },
+        ],
+      });
+
+      const result = await service.extract(
+        buildState({ inboundMessage: "Cancel the airport pickup" }),
+      );
+
+      expect(result.intent).toBe("cancel");
+      expect(openaiMock.chat.completions.create).toHaveBeenCalledOnce();
+    });
+
     it("does not override an explicit model correction away from airport pickup", async () => {
       openaiMock.chat.completions.create.mockResolvedValue({
         choices: [

@@ -903,6 +903,23 @@ describe("BookingAgentResponderService", () => {
       expect(claudeMock.messages.create).not.toHaveBeenCalled();
     });
 
+    it("asks for the flight number when it is the only missing airport field", async () => {
+      const response = await service.generateResponse(
+        buildState({
+          stage: "collecting",
+          draft: {
+            bookingType: "AIRPORT_PICKUP",
+            vehicleType: "SUV",
+            pickupDate: "2026-10-30",
+            dropoffLocation: "Lekki",
+          },
+        }),
+      );
+
+      expect(response.text).toContain("flight number");
+      expect(claudeMock.messages.create).not.toHaveBeenCalled();
+    });
+
     it("does not trigger fallback when all required fields are present", async () => {
       claudeMock.messages.create.mockResolvedValue({
         content: [{ type: "text", text: "Response from Claude" }],

@@ -24,6 +24,7 @@ import type {
   BookingAgentState,
   ExtractionResult,
   InteractiveReply,
+  UserIntent,
 } from "./conversation.interface";
 import { buildExtractorSystemPrompt } from "./prompts/extractor.prompt";
 
@@ -73,11 +74,29 @@ const VEHICLE_TYPE_REPLIES = {
 const AIRPORT_PICKUP_PHRASES = [
   "airport pickup",
   "airport pick-up",
+  "airport pick up",
   "airport transfer",
+  "flight pickup",
   "from the airport",
 ];
+const NON_AIRPORT_BOOKING_PHRASES = [
+  "day booking",
+  "day service",
+  "night booking",
+  "night service",
+  "full day",
+  "24 hours",
+  "round the clock",
+];
+const AIRPORT_RETRYABLE_INTENTS = new Set<UserIntent>([
+  "greeting",
+  "unknown",
+  "provide_info",
+  "update_info",
+  "new_booking",
+]);
 const AIRPORT_EXTRACTION_RETRY_MESSAGE =
-  'The message explicitly requests an airport pickup, but the extraction was incomplete. Re-extract every explicit airport detail with intent "provide_info", not "greeting". Set bookingType to "AIRPORT_PICKUP", use pickupDate for the flight date, flightNumber for the flight, and dropoffLocation for the destination address. Do not set pickupLocation or pickupTime.';
+  'The message may request an airport pickup, but the extraction was incomplete. Re-extract every explicit booking detail with intent "provide_info", not "greeting". Preserve an explicit DAY, NIGHT, or FULL_DAY booking type, pickup location, and pickup time. Otherwise, for an explicit airport pickup, set bookingType to "AIRPORT_PICKUP", use pickupDate for the flight date, flightNumber for the flight, and dropoffLocation for the destination address; do not set pickupLocation or pickupTime.';
 
 @Injectable()
 export class BookingAgentExtractorService {
@@ -120,6 +139,9 @@ export class BookingAgentExtractorService {
       const isAirportPickupRequest = AIRPORT_PICKUP_PHRASES.some((phrase) =>
         normalizedMessage.includes(phrase),
       );
+      const hasExplicitNonAirportBookingType = NON_AIRPORT_BOOKING_PHRASES.some((phrase) =>
+        normalizedMessage.includes(phrase),
+      );
       const requestExtraction = (prompt: string) =>
         this.openai.chat.completions.create(
           {
@@ -140,10 +162,24 @@ export class BookingAgentExtractorService {
       let validated = extractionSchema.parse(JSON.parse(content));
       this.logger.debug({ conversationId }, "Extraction response received");
 
+      const hasModelNonAirportBookingType =
+        validated.draftPatch.bookingType !== undefined &&
+        validated.draftPatch.bookingType !== "AIRPORT_PICKUP";
+      const airportDraft = { ...draft, ...validated.draftPatch };
+      const missingAirportFields = getMissingRequiredFields(airportDraft);
+      const hasMissingAirportSourceField =
+        airportDraft.bookingType === "AIRPORT_PICKUP" &&
+        missingAirportFields.some((field) =>
+          ["pickupDate", "flightNumber", "dropoffLocation"].includes(field),
+        );
       if (
         isAirportPickupRequest &&
+        !hasExplicitNonAirportBookingType &&
+        !hasModelNonAirportBookingType &&
+        AIRPORT_RETRYABLE_INTENTS.has(validated.intent) &&
         (!validated.draftPatch.bookingType ||
-          (validated.intent !== "greeting" && !shouldApplyDraftPatch(validated.intent)))
+          (validated.intent !== "greeting" && !shouldApplyDraftPatch(validated.intent)) ||
+          hasMissingAirportSourceField)
       ) {
         this.logger.warn({ conversationId }, "Retrying incomplete airport pickup extraction");
         try {
@@ -167,7 +203,10 @@ export class BookingAgentExtractorService {
       const intent =
         Object.keys(draftPatch).length > 0 &&
         (validated.intent === "greeting" ||
-          (isAirportPickupRequest && !shouldApplyDraftPatch(validated.intent)))
+          (isAirportPickupRequest &&
+            !hasExplicitNonAirportBookingType &&
+            AIRPORT_RETRYABLE_INTENTS.has(validated.intent) &&
+            !shouldApplyDraftPatch(validated.intent)))
           ? "provide_info"
           : validated.intent;
       const clarificationPrompt = getDurationUnitClarification(

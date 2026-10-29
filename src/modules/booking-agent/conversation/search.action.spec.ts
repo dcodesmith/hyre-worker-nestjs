@@ -109,6 +109,29 @@ describe("SearchAction", () => {
     expect(result.stage).toBe("collecting");
   });
 
+  it("does not search for an airport pickup without a flight number", async () => {
+    googlePlacesServiceMock.validateAddress.mockResolvedValue({
+      isValid: true,
+      normalizedAddress: "Lekki, Lagos, Nigeria",
+    });
+
+    const result = await searchAction.run(
+      buildState({
+        stage: "searching",
+        draft: {
+          bookingType: "AIRPORT_PICKUP",
+          pickupDate: "2026-10-30",
+          vehicleType: "SUV",
+          dropoffLocation: "Lekki",
+        },
+      }),
+    );
+
+    expect(result.stage).toBe("collecting");
+    expect(flightAwareServiceMock.searchAirportPickupFlight).not.toHaveBeenCalled();
+    expect(bookingAgentSearchServiceMock.searchVehiclesFromExtracted).not.toHaveBeenCalled();
+  });
+
   it("searches without a vehicleType filter when the draft uses ANY", async () => {
     googlePlacesServiceMock.validateAddress.mockResolvedValue({
       isValid: true,

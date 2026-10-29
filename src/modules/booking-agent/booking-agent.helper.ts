@@ -6,5 +6,8 @@ export function getMissingRequiredFields(draft: BookingDraft): string[] {
     draft.bookingType === "AIRPORT_PICKUP"
       ? REQUIRED_SEARCH_FIELDS.AIRPORT_PICKUP
       : REQUIRED_SEARCH_FIELDS.DEFAULT;
-  return requiredFields.filter((field) => !draft[field]);
+  return requiredFields.filter((field) => {
+    const value = draft[field];
+    return typeof value === "string" ? value.trim().length === 0 : !value;
+  });
 }
