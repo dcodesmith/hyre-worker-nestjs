@@ -31,7 +31,15 @@ describe("WhatsAppIngressService", () => {
 
   beforeEach(async () => {
     config = {};
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
     persistenceService = {
       upsertConversationForInbound: vi.fn(),
       createInboundMessage: vi.fn(),
@@ -205,7 +213,12 @@ describe("WhatsAppIngressService", () => {
     config.TWILIO_API_KEY_SID = "SK123";
     config.TWILIO_API_KEY_SECRET = "api-key-secret";
     arrangeAcceptedInbound();
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: false }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
 
     await expect(
       service.handleInbound({

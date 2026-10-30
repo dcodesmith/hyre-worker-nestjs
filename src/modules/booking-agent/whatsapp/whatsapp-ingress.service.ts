@@ -151,6 +151,7 @@ export class WhatsAppIngressService {
         }),
         signal: AbortSignal.timeout(WhatsAppIngressService.TYPING_INDICATOR_TIMEOUT_MS),
       });
+      await response.text();
 
       if (!response.ok) {
         this.logger.warn(
