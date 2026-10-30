@@ -185,6 +185,8 @@ export const envSchema = z
     TWILIO_SECRET: z.string().min(1, "TWILIO_SECRET is required"),
     TWILIO_WHATSAPP_NUMBER: z.string().min(1, "TWILIO_WHATSAPP_NUMBER is required"),
     TWILIO_WEBHOOK_URL: z.url("TWILIO_WEBHOOK_URL must be a valid URL").optional(),
+    TWILIO_API_KEY_SID: optionalNonEmptyString,
+    TWILIO_API_KEY_SECRET: optionalNonEmptyString,
     TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID: optionalTwilioContentSidSchema,
     TWILIO_CLIENT_BOOKING_LEG_START_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
     TWILIO_CHAUFFEUR_BOOKING_LEG_START_REMINDER_CONTENT_SID: optionalTwilioContentSidSchema,
