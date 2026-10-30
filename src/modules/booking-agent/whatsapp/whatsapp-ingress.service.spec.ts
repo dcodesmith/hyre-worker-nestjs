@@ -1,7 +1,8 @@
 import { getQueueToken } from "@nestjs/bullmq";
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { PinoLogger } from "nestjs-pino";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { WHATSAPP_AGENT_QUEUE } from "../../../config/constants";
 import { BookingAgentWindowPolicyService } from "../booking-agent-window-policy.service";
@@ -20,8 +21,25 @@ describe("WhatsAppIngressService", () => {
   };
   let whatsappAgentQueue: { add: ReturnType<typeof vi.fn> };
   let logger: PinoLogger;
+  let config: Record<string, string | undefined>;
+
+  const arrangeAcceptedInbound = () => {
+    persistenceService.upsertConversationForInbound.mockResolvedValue({ id: "conv-1" });
+    persistenceService.createInboundMessage.mockResolvedValue({ id: "msg-1" });
+    whatsappAgentQueue.add.mockResolvedValue(undefined);
+  };
 
   beforeEach(async () => {
+    config = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
     persistenceService = {
       upsertConversationForInbound: vi.fn(),
       createInboundMessage: vi.fn(),
@@ -48,6 +66,12 @@ describe("WhatsAppIngressService", () => {
           useValue: windowPolicyService,
         },
         {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn((key: string) => config[key]),
+          },
+        },
+        {
           provide: getQueueToken(WHATSAPP_AGENT_QUEUE),
           useValue: whatsappAgentQueue,
         },
@@ -58,6 +82,10 @@ describe("WhatsAppIngressService", () => {
 
     service = moduleRef.get(WhatsAppIngressService);
     logger = moduleRef.get(PinoLogger);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("skips status callback payloads", async () => {
@@ -114,5 +142,98 @@ describe("WhatsAppIngressService", () => {
 
     expect(logger.debug).toHaveBeenCalledWith("Skipping non-customer webhook payload");
     expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(invalidPhone);
+  });
+
+  it("sends the WhatsApp typing indicator with API key credentials", async () => {
+    config.TWILIO_API_KEY_SID = "SK123";
+    config.TWILIO_API_KEY_SECRET = "api-key-secret";
+    arrangeAcceptedInbound();
+
+    await service.handleInbound({
+      From: "whatsapp:+2348012345678",
+      MessageSid: "SM123",
+      Body: "hello",
+      NumMedia: "0",
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://messaging.twilio.com/v3/Indicators/Typing.json",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          Authorization: "Basic U0sxMjM6YXBpLWtleS1zZWNyZXQ=",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          channel: "WHATSAPP",
+          messageId: "SM123",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("skips the typing indicator when API key credentials are missing", async () => {
+    arrangeAcceptedInbound();
+
+    await service.handleInbound({
+      From: "whatsapp:+2348012345678",
+      MessageSid: "SM123",
+      Body: "hello",
+      NumMedia: "0",
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("swallows typing indicator request errors", async () => {
+    config.TWILIO_API_KEY_SID = "SK123";
+    config.TWILIO_API_KEY_SECRET = "api-key-secret";
+    arrangeAcceptedInbound();
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("network down"));
+
+    await expect(
+      service.handleInbound({
+        From: "whatsapp:+2348012345678",
+        MessageSid: "SM123",
+        Body: "hello",
+        NumMedia: "0",
+      }),
+    ).resolves.toBeUndefined();
+
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ messageSid: "SM123" }),
+        "Twilio WhatsApp typing indicator request failed",
+      );
+    });
+  });
+
+  it("swallows non-success typing indicator responses", async () => {
+    config.TWILIO_API_KEY_SID = "SK123";
+    config.TWILIO_API_KEY_SECRET = "api-key-secret";
+    arrangeAcceptedInbound();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: false }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      service.handleInbound({
+        From: "whatsapp:+2348012345678",
+        MessageSid: "SM123",
+        Body: "hello",
+        NumMedia: "0",
+      }),
+    ).resolves.toBeUndefined();
+
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        { messageSid: "SM123", status: 503 },
+        "Twilio WhatsApp typing indicator request failed",
+      );
+    });
   });
 });

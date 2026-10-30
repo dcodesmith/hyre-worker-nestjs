@@ -41,6 +41,11 @@ Before running the production workflow:
 Do not reuse the development Redis URL: both environments run queue processors and would consume
 each other's jobs.
 
+The WhatsApp booking-agent typing indicator requires `TWILIO_API_KEY_SID` and
+`TWILIO_API_KEY_SECRET` as Fly secrets. Use a Twilio API Key SID and secret, not the account auth
+token. Local and test environments may omit both; typing indicators are skipped when either value
+is absent.
+
 Production uses the Fly-managed Upstash database `hyre-worker-production` on the Fixed 250MB plan
 in `lhr`. Eviction and automatic plan upgrades are disabled. Queue producers must keep completed
 and failed history bounded; current defaults retain at most 100 completed and 50 failed jobs.
