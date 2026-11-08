@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { DatabaseService } from "../database/database.service";
 import { ReferralProgramService } from "../referral/referral-program.service";
+import { createAuth } from "./auth.config";
 import { ADMIN, FLEET_OWNER, MOBILE, STAFF, USER, WEB } from "./auth.const";
 import {
   AuthErrorCode,
@@ -74,7 +75,12 @@ describe("AuthService", () => {
   >;
 
   const setupTestModule = async (
-    overrides: Partial<typeof baseConfig & { APP_ENV: EnvConfig["APP_ENV"] }> = {},
+    overrides: Partial<
+      typeof baseConfig & {
+        APP_ENV: EnvConfig["APP_ENV"];
+        LOCAL_WEB_ORIGINS: EnvConfig["LOCAL_WEB_ORIGINS"];
+      }
+    > = {},
   ) => {
     const config = { ...baseConfig, ...overrides };
 
@@ -535,53 +541,43 @@ describe("AuthService", () => {
     });
 
     describe("development API local web origins", () => {
-      it("rejects the Vite origins when APP_ENV is not development", () => {
-        expect(
-          service.validateRoleForClient({
-            role: USER,
-            origin: "http://localhost:5173",
-            clientType: WEB,
-          }),
-        ).toBe(false);
-        expect(service.getTrustedOriginPatterns()).not.toContain("http://localhost:5173");
-        expect(service.getTrustedOriginPatterns()).not.toContain("http://127.0.0.1:5173");
-      });
+      const localWebOrigins = ["http://localhost:5173", "http://127.0.0.1:5173"] as const;
 
       describe("APP_ENV=development with NODE_ENV=production", () => {
         beforeEach(async () => {
-          await setupTestModule({ APP_ENV: "development" });
+          await setupTestModule({
+            APP_ENV: "development",
+            LOCAL_WEB_ORIGINS: [...localWebOrigins],
+          });
         });
 
-        it.each(["http://localhost:5173", "http://127.0.0.1:5173"])(
-          "allows the user role from %s",
-          (origin) => {
-            expect(
-              service.validateRoleForClient({
-                role: USER,
-                origin,
-                clientType: WEB,
-              }),
-            ).toBe(true);
-            expect(service.getTrustedOriginPatterns()).toContain(origin);
-          },
-        );
-
-        it.each([
-          "http://localhost:3000",
-          "http://localhost:5174",
-          "http://127.0.0.1:3000",
-          "https://localhost:5173",
-          "http://localhost:51730",
-          "http://evil.com",
-        ])("rejects %s", (origin) => {
+        it.each(localWebOrigins)("allows the user role from %s", (origin) => {
           expect(
             service.validateRoleForClient({
               role: USER,
               origin,
               clientType: WEB,
             }),
+          ).toBe(true);
+          expect(service.getTrustedOriginPatterns()).toContain(origin);
+          expect(service.getCorsOriginPatterns()).not.toContain(origin);
+        });
+
+        it("keeps deployed web origins on CORS and passes local origins to Better Auth", () => {
+          expect(service.getCorsOriginPatterns()).toContain("https://example.com");
+          expect(vi.mocked(createAuth).mock.lastCall?.[0].trustedOrigins).toEqual(
+            expect.arrayContaining([...localWebOrigins, "https://example.com"]),
+          );
+        });
+
+        it("rejects an origin that was not configured", () => {
+          expect(
+            service.validateRoleForClient({
+              role: USER,
+              origin: "http://localhost:3000",
+              clientType: WEB,
+            }),
           ).toBe(false);
-          expect(service.getTrustedOriginPatterns()).not.toContain(origin);
         });
 
         it("rejects fleetOwner from the local web origin", () => {
@@ -596,27 +592,22 @@ describe("AuthService", () => {
       });
 
       it.each(["production", "preview"] as const)(
-        "does not trust local web origins when APP_ENV is %s",
+        "does not trust LOCAL_WEB_ORIGINS when APP_ENV is %s",
         async (appEnv) => {
-          await setupTestModule({ APP_ENV: appEnv });
+          await setupTestModule({ APP_ENV: appEnv, LOCAL_WEB_ORIGINS: [...localWebOrigins] });
 
-          expect(
-            service.validateRoleForClient({
-              role: USER,
-              origin: "http://localhost:5173",
-              clientType: WEB,
-            }),
-          ).toBe(false);
-          expect(
-            service.validateRoleForClient({
-              role: USER,
-              origin: "http://127.0.0.1:5173",
-              clientType: WEB,
-            }),
-          ).toBe(false);
-          expect(service.getTrustedOriginPatterns()).not.toEqual(
-            expect.arrayContaining(["http://localhost:5173", "http://127.0.0.1:5173"]),
-          );
+          for (const origin of localWebOrigins) {
+            expect(
+              service.validateRoleForClient({
+                role: USER,
+                origin,
+                clientType: WEB,
+              }),
+            ).toBe(false);
+            expect(service.getTrustedOriginPatterns()).not.toContain(origin);
+            expect(service.getCorsOriginPatterns()).not.toContain(origin);
+          }
+          expect(service.getCorsOriginPatterns()).toContain("https://example.com");
         },
       );
     });

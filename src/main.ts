@@ -45,10 +45,10 @@ async function bootstrap() {
 
     const configService = app.get(ConfigService<EnvConfig>);
 
-    // Configure CORS for auth endpoints using AuthService's effective allow-list
-    // so CORS and Better Auth always evaluate the same origin patterns.
+    // Browser CORS uses deployed web origins only. LOCAL_WEB_ORIGINS is trusted
+    // by Better Auth and role checks on the development API, not by CORS.
     const authService = app.get(AuthService);
-    const allowedOriginPatterns = authService.getTrustedOriginPatterns();
+    const allowedOriginPatterns = authService.getCorsOriginPatterns();
 
     if (allowedOriginPatterns.length > 0) {
       app.enableCors({

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  getDevelopmentLocalWebOrigins,
-  getDevLanOriginPatterns,
-  isOriginAllowed,
-  originMatchesPattern,
-} from "./origin-pattern";
+import { getDevLanOriginPatterns, isOriginAllowed, originMatchesPattern } from "./origin-pattern";
 
 describe("origin-pattern", () => {
   describe("getDevLanOriginPatterns", () => {
@@ -21,22 +16,6 @@ describe("origin-pattern", () => {
       expect(getDevLanOriginPatterns("production")).toEqual([]);
       expect(getDevLanOriginPatterns("test")).toEqual([]);
       expect(getDevLanOriginPatterns(undefined)).toEqual([]);
-    });
-  });
-
-  describe("getDevelopmentLocalWebOrigins", () => {
-    it("returns the Vite dev-server origins only for the development API", () => {
-      expect(getDevelopmentLocalWebOrigins("development")).toEqual([
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-      ]);
-    });
-
-    it("returns an empty list outside the development API", () => {
-      expect(getDevelopmentLocalWebOrigins("production")).toEqual([]);
-      expect(getDevelopmentLocalWebOrigins("preview")).toEqual([]);
-      expect(getDevelopmentLocalWebOrigins("test")).toEqual([]);
-      expect(getDevelopmentLocalWebOrigins(undefined)).toEqual([]);
     });
   });
 

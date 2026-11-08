@@ -37,20 +37,6 @@ export function getDevLanOriginPatterns(nodeEnv: string | undefined): string[] {
 }
 
 /**
- * Exact local web-app origins (Vite's default dev server).
- *
- * The development Fly API runs `NODE_ENV=production` with `APP_ENV=development`,
- * so the LAN wildcards above do not apply there. These two origins are added
- * only for that development API. Production, preview, and every other port
- * stay on the configured `TRUSTED_ORIGINS` list.
- */
-const DEVELOPMENT_LOCAL_WEB_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"] as const;
-
-export function getDevelopmentLocalWebOrigins(appEnv: string | undefined): string[] {
-  return appEnv === "development" ? [...DEVELOPMENT_LOCAL_WEB_ORIGINS] : [];
-}
-
-/**
  * Tests whether a candidate origin string matches a pattern. Patterns without
  * `*` or `?` are compared as exact origins (protocol://host[:port]); patterns
  * with wildcards are converted into a strict, anchored regex.

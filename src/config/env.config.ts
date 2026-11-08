@@ -31,6 +31,32 @@ const optionalUrl = (protocol: RegExp, error: string) =>
       .optional(),
   );
 const optionalOtlpHttpUrl = optionalUrl(/^https?$/, "OTLP endpoint must use http:// or https://");
+const LOCAL_WEB_ORIGIN_ERROR =
+  "LOCAL_WEB_ORIGINS entries must be exact http://localhost or http://127.0.0.1 origins";
+
+function localWebOrigin(value: string): string | null {
+  if (/[*@?#]/.test(value)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "http:") return null;
+  if (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (url.pathname !== "/" && url.pathname !== "") return null;
+  if (url.search !== "" || url.hash !== "") return null;
+
+  return url.origin;
+}
+
+const localWebOriginSchema = z
+  .string()
+  .refine((value) => localWebOrigin(value) !== null, { error: LOCAL_WEB_ORIGIN_ERROR })
+  .transform((value) => localWebOrigin(value) ?? value);
 const optionalSentryDsn = optionalUrl(/^https?$/, "SENTRY_DSN must use http:// or https://");
 const requiredTwilioContentSidKeys = [
   "TWILIO_BOOKING_STATUS_UPDATE_CONTENT_SID",
@@ -271,6 +297,16 @@ export const envSchema = z
           .array(z.url("Each TRUSTED_ORIGIN must be a valid URL"))
           .min(1, "At least one valid TRUSTED_ORIGIN is required"),
       ),
+    LOCAL_WEB_ORIGINS: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(localWebOriginSchema).transform((origins) => [...new Set(origins)])),
     SENDER_NAME: z.string().min(2, "SENDER_NAME is required"),
 
     // Cloudflare R2 object storage
