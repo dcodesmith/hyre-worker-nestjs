@@ -197,7 +197,7 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
 
       - name: Verify token can access apps list
         run: flyctl apps list >/dev/null
@@ -226,7 +226,7 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
 
       - name: Create or reuse PR Redis app
         id: redis
@@ -525,7 +525,7 @@ jobs:
             BULL_BOARD_PASSWORD=${{ env.BULL_BOARD_PASSWORD }}
 
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@v1.4
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
 
       - name: Enforce single-machine preview scale
         run: flyctl scale count app=1 -a "${{ needs.setup.outputs.preview_app }}" --yes
