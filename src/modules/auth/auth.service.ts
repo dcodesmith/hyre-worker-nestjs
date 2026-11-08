@@ -31,7 +31,11 @@ import {
 } from "./auth.error";
 import type { RoleName, ValidateRoleForClientParams } from "./auth.interface";
 import { AuthEmailService } from "./auth-email.service";
-import { getDevLanOriginPatterns, isOriginAllowed } from "./origin-pattern";
+import {
+  getDevelopmentLocalWebOrigins,
+  getDevLanOriginPatterns,
+  isOriginAllowed,
+} from "./origin-pattern";
 
 const REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const REFERRAL_CODE_LENGTH = 8;
@@ -71,6 +75,16 @@ export class AuthService implements OnModuleInit {
       );
     }
 
+    const localWebOrigins = getDevelopmentLocalWebOrigins(
+      this.configService.get("APP_ENV", { infer: true }),
+    );
+    if (localWebOrigins.length > 0) {
+      this.logger.info(
+        { localWebOrigins },
+        "Trusting local web origins for the development API (APP_ENV=development)",
+      );
+    }
+
     this._auth = createAuth({
       prisma: this.databaseService,
       sessionSecret,
@@ -98,8 +112,9 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Returns the effective set of trusted origin patterns (env-configured
-   * origins plus any dev-only LAN wildcards). Used by the HTTP layer to keep
-   * CORS in sync with Better Auth's origin check.
+   * origins, dev-only LAN wildcards, and the development API's local web
+   * origins). Used by the HTTP layer to keep CORS in sync with Better Auth's
+   * origin check.
    */
   getTrustedOriginPatterns(): readonly string[] {
     if (this.trustedOrigins.length === 0) {
@@ -139,9 +154,11 @@ export class AuthService implements OnModuleInit {
   private buildTrustedOrigins(authBaseUrl: string): string[] {
     const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
+    const appEnv = this.configService.get("APP_ENV", { infer: true });
     const mergedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
     const devOrigins = getDevLanOriginPatterns(nodeEnv);
-    return [...mergedOrigins, ...devOrigins];
+    const localWebOrigins = getDevelopmentLocalWebOrigins(appEnv);
+    return [...mergedOrigins, ...devOrigins, ...localWebOrigins];
   }
 
   get auth(): Auth {
@@ -177,6 +194,7 @@ export class AuthService implements OnModuleInit {
    * Rules:
    * - Mobile clients can only request "user" role
    * - Web clients must have an Origin header from a TRUSTED_ORIGINS source
+   * - APP_ENV=development also trusts http://localhost:5173 and http://127.0.0.1:5173
    * - Web clients accessing /admin/* can request "admin" or "staff"
    * - Web clients accessing /fleet-owner/* can request "fleetOwner"
    * - Web clients accessing /auth (default) can only request "user"

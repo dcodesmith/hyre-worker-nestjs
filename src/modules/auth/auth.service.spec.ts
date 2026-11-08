@@ -73,7 +73,9 @@ describe("AuthService", () => {
     string | string[]
   >;
 
-  const setupTestModule = async (overrides: Partial<typeof baseConfig> = {}) => {
+  const setupTestModule = async (
+    overrides: Partial<typeof baseConfig & { APP_ENV: EnvConfig["APP_ENV"] }> = {},
+  ) => {
     const config = { ...baseConfig, ...overrides };
 
     mockConfigService.get.mockImplementation((key: keyof EnvConfig) => {
@@ -530,6 +532,93 @@ describe("AuthService", () => {
         });
         expect(result).toBe(false);
       });
+    });
+
+    describe("development API local web origins", () => {
+      it("rejects the Vite origins when APP_ENV is not development", () => {
+        expect(
+          service.validateRoleForClient({
+            role: USER,
+            origin: "http://localhost:5173",
+            clientType: WEB,
+          }),
+        ).toBe(false);
+        expect(service.getTrustedOriginPatterns()).not.toContain("http://localhost:5173");
+        expect(service.getTrustedOriginPatterns()).not.toContain("http://127.0.0.1:5173");
+      });
+
+      describe("APP_ENV=development with NODE_ENV=production", () => {
+        beforeEach(async () => {
+          await setupTestModule({ APP_ENV: "development" });
+        });
+
+        it.each(["http://localhost:5173", "http://127.0.0.1:5173"])(
+          "allows the user role from %s",
+          (origin) => {
+            expect(
+              service.validateRoleForClient({
+                role: USER,
+                origin,
+                clientType: WEB,
+              }),
+            ).toBe(true);
+            expect(service.getTrustedOriginPatterns()).toContain(origin);
+          },
+        );
+
+        it.each([
+          "http://localhost:3000",
+          "http://localhost:5174",
+          "http://127.0.0.1:3000",
+          "https://localhost:5173",
+          "http://localhost:51730",
+          "http://evil.com",
+        ])("rejects %s", (origin) => {
+          expect(
+            service.validateRoleForClient({
+              role: USER,
+              origin,
+              clientType: WEB,
+            }),
+          ).toBe(false);
+          expect(service.getTrustedOriginPatterns()).not.toContain(origin);
+        });
+
+        it("rejects fleetOwner from the local web origin", () => {
+          expect(
+            service.validateRoleForClient({
+              role: FLEET_OWNER,
+              origin: "http://localhost:5173",
+              clientType: WEB,
+            }),
+          ).toBe(false);
+        });
+      });
+
+      it.each(["production", "preview"] as const)(
+        "does not trust local web origins when APP_ENV is %s",
+        async (appEnv) => {
+          await setupTestModule({ APP_ENV: appEnv });
+
+          expect(
+            service.validateRoleForClient({
+              role: USER,
+              origin: "http://localhost:5173",
+              clientType: WEB,
+            }),
+          ).toBe(false);
+          expect(
+            service.validateRoleForClient({
+              role: USER,
+              origin: "http://127.0.0.1:5173",
+              clientType: WEB,
+            }),
+          ).toBe(false);
+          expect(service.getTrustedOriginPatterns()).not.toEqual(
+            expect.arrayContaining(["http://localhost:5173", "http://127.0.0.1:5173"]),
+          );
+        },
+      );
     });
   });
 
