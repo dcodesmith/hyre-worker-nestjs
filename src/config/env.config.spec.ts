@@ -287,6 +287,57 @@ describe("envSchema WEBSITE_URL", () => {
   );
 });
 
+describe("envSchema LOCAL_WEB_ORIGINS", () => {
+  const validEnv = {
+    ...productionEnv,
+    OPERATIONS_EMAIL: "operations@example.com",
+  };
+
+  it("defaults to an empty list", () => {
+    expect(envSchema.parse(validEnv).LOCAL_WEB_ORIGINS).toEqual([]);
+    expect(envSchema.parse({ ...validEnv, LOCAL_WEB_ORIGINS: "" }).LOCAL_WEB_ORIGINS).toEqual([]);
+  });
+
+  it("normalizes and dedupes exact localhost and loopback origins", () => {
+    const result = envSchema.parse({
+      ...validEnv,
+      LOCAL_WEB_ORIGINS: "HTTP://LocalHost:5173/, http://localhost:5173, http://127.0.0.1:5173/",
+    });
+
+    expect(result.LOCAL_WEB_ORIGINS).toEqual(["http://localhost:5173", "http://127.0.0.1:5173"]);
+  });
+
+  it.each([
+    "https://localhost:5173",
+    "http://evil.com",
+    "http://localhost:5173/login",
+    "http://user:pass@localhost:5173",
+    "http://@localhost:5173",
+    "http://localhost:5173?x=1",
+    "http://localhost:5173?",
+    "http://localhost:5173#frag",
+    "http://localhost:*",
+    "http://localhost:5173,http://evil.com",
+  ])("rejects %s", (localWebOrigins) => {
+    const result = envSchema.safeParse({
+      ...validEnv,
+      LOCAL_WEB_ORIGINS: localWebOrigins,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message:
+              "LOCAL_WEB_ORIGINS entries must be exact http://localhost or http://127.0.0.1 origins",
+          }),
+        ]),
+      );
+    }
+  });
+});
+
 describe("envSchema APP_ENV", () => {
   it("defaults to development", () => {
     const result = envSchema.parse({

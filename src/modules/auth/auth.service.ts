@@ -40,6 +40,7 @@ const REFERRAL_CODE_GENERATION_ATTEMPTS = 5;
 @Injectable()
 export class AuthService implements OnModuleInit {
   private _auth: Auth | null = null;
+  private corsOrigins: string[] = [];
   private trustedOrigins: string[] = [];
 
   constructor(
@@ -60,14 +61,22 @@ export class AuthService implements OnModuleInit {
     const sessionSecret = this.configService.get("SESSION_SECRET", { infer: true });
     const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
-    const trustedOrigins = this.buildTrustedOrigins(authBaseUrl);
-    this.trustedOrigins = trustedOrigins;
+    this.loadOrigins(authBaseUrl);
+    const trustedOrigins = this.trustedOrigins;
 
     if (nodeEnv === "development") {
       const devOrigins = getDevLanOriginPatterns(nodeEnv);
       this.logger.info(
         { devOrigins },
         "Trusting LAN origins for local development (NODE_ENV=development)",
+      );
+    }
+
+    const localWebOrigins = this.developmentLocalWebOrigins();
+    if (localWebOrigins.length > 0) {
+      this.logger.info(
+        { localWebOrigins },
+        "Trusting LOCAL_WEB_ORIGINS for the development API (APP_ENV=development)",
       );
     }
 
@@ -97,16 +106,20 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Returns the effective set of trusted origin patterns (env-configured
-   * origins plus any dev-only LAN wildcards). Used by the HTTP layer to keep
-   * CORS in sync with Better Auth's origin check.
+   * Origins trusted by Better Auth and client-role checks.
+   * Includes LOCAL_WEB_ORIGINS only when APP_ENV is development.
    */
   getTrustedOriginPatterns(): readonly string[] {
-    if (this.trustedOrigins.length === 0) {
-      const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
-      this.trustedOrigins = this.buildTrustedOrigins(authBaseUrl);
-    }
+    this.ensureOrigins();
     return this.trustedOrigins;
+  }
+
+  /**
+   * Origins allowed by browser CORS. Does not include LOCAL_WEB_ORIGINS.
+   */
+  getCorsOriginPatterns(): readonly string[] {
+    this.ensureOrigins();
+    return this.corsOrigins;
   }
 
   /**
@@ -136,12 +149,27 @@ export class AuthService implements OnModuleInit {
     return [...trustedOrigins, authOrigin];
   }
 
-  private buildTrustedOrigins(authBaseUrl: string): string[] {
+  private ensureOrigins(): void {
+    if (this.corsOrigins.length > 0 && this.trustedOrigins.length > 0) return;
+    const authBaseUrl = this.configService.get("AUTH_BASE_URL", { infer: true });
+    this.loadOrigins(authBaseUrl);
+  }
+
+  private loadOrigins(authBaseUrl: string): void {
+    this.corsOrigins = this.buildCorsOrigins(authBaseUrl);
+    this.trustedOrigins = [...new Set([...this.corsOrigins, ...this.developmentLocalWebOrigins()])];
+  }
+
+  private developmentLocalWebOrigins(): readonly string[] {
+    if (this.configService.get("APP_ENV", { infer: true }) !== "development") return [];
+    return this.configService.get("LOCAL_WEB_ORIGINS", { infer: true }) ?? [];
+  }
+
+  private buildCorsOrigins(authBaseUrl: string): string[] {
     const trustedOriginsFromEnv = this.configService.get("TRUSTED_ORIGINS", { infer: true });
     const nodeEnv = this.configService.get("NODE_ENV", { infer: true });
     const mergedOrigins = this.mergeTrustedOriginsWithAuthBase(trustedOriginsFromEnv, authBaseUrl);
-    const devOrigins = getDevLanOriginPatterns(nodeEnv);
-    return [...mergedOrigins, ...devOrigins];
+    return [...mergedOrigins, ...getDevLanOriginPatterns(nodeEnv)];
   }
 
   get auth(): Auth {
@@ -176,7 +204,8 @@ export class AuthService implements OnModuleInit {
    *
    * Rules:
    * - Mobile clients can only request "user" role
-   * - Web clients must have an Origin header from a TRUSTED_ORIGINS source
+   * - Web clients must have an Origin header from a trusted origin
+   * - APP_ENV=development also trusts exact LOCAL_WEB_ORIGINS
    * - Web clients accessing /admin/* can request "admin" or "staff"
    * - Web clients accessing /fleet-owner/* can request "fleetOwner"
    * - Web clients accessing /auth (default) can only request "user"
