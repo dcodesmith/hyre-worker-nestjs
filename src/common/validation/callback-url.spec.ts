@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { callbackUrlSchema, isAllowedCallbackUrl } from "./callback-url";
 
 const prodEnv = {
@@ -15,6 +15,10 @@ const devFlyEnv = {
 };
 
 describe("isAllowedCallbackUrl", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("allows https callback URLs matching TRUSTED_ORIGINS or WEBSITE_URL in production", () => {
     expect(
       isAllowedCallbackUrl("https://app.example.com/payment/callback", "production", prodEnv),
@@ -44,9 +48,45 @@ describe("isAllowedCallbackUrl", () => {
 
   it("allows localhost http callback URLs in non-production", () => {
     expect(
-      isAllowedCallbackUrl("http://localhost:3000/payment/callback", "development", prodEnv),
+      isAllowedCallbackUrl("http://localhost:3000/payment/callback", "development", {
+        TRUSTED_ORIGINS: prodEnv.TRUSTED_ORIGINS,
+        WEBSITE_URL: prodEnv.WEBSITE_URL,
+      }),
     ).toBe(true);
     expect(isAllowedCallbackUrl("http://127.0.0.1:3000/payment/callback", "test", {})).toBe(true);
+  });
+
+  it("blocks development-only exceptions when APP_ENV is production or NODE_ENV is unset", () => {
+    const prodWithLocalOrigins = {
+      ...prodEnv,
+      LOCAL_WEB_ORIGINS: "http://localhost:5173",
+    };
+
+    expect(
+      isAllowedCallbackUrl(
+        "http://localhost:5173/bookings/payment-status",
+        "development",
+        prodWithLocalOrigins,
+      ),
+    ).toBe(false);
+    expect(
+      isAllowedCallbackUrl(
+        "exp://192.168.1.10:8081/--/payment-status",
+        "development",
+        prodWithLocalOrigins,
+      ),
+    ).toBe(false);
+    vi.stubEnv("NODE_ENV", "");
+    expect(
+      isAllowedCallbackUrl("exp://192.168.1.10:8081/--/payment-status", undefined, {
+        TRUSTED_ORIGINS: prodEnv.TRUSTED_ORIGINS,
+      }),
+    ).toBe(false);
+    expect(
+      isAllowedCallbackUrl("http://localhost:5173/bookings/payment-status", undefined, {
+        LOCAL_WEB_ORIGINS: "http://localhost:5173",
+      }),
+    ).toBe(false);
   });
 
   it("rejects unsafe protocols and unallowlisted custom schemes", () => {

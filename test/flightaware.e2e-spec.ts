@@ -150,7 +150,7 @@ describe("FlightAware E2E Tests", () => {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       response = await request(app.getHttpServer())
         .get(`/api/search-flight?flightNumber=DL54&date=${upcomingDate}`)
-        .set("x-forwarded-for", "198.51.100.20");
+        .set("fly-client-ip", "198.51.100.20");
 
       if (response.status === HttpStatus.TOO_MANY_REQUESTS) {
         break;
@@ -191,13 +191,11 @@ describe("FlightAware E2E Tests", () => {
     const path = `/api/search-flight?flightNumber=DL54&date=${upcomingDate}`;
 
     for (let attempt = 0; attempt < FLIGHT_SEARCH_THROTTLE_CONFIG.limit + 1; attempt += 1) {
-      await request(app.getHttpServer()).get(path).set("x-forwarded-for", exhaustedIp);
+      await request(app.getHttpServer()).get(path).set("fly-client-ip", exhaustedIp);
     }
 
-    const blocked = await request(app.getHttpServer())
-      .get(path)
-      .set("x-forwarded-for", exhaustedIp);
-    const allowed = await request(app.getHttpServer()).get(path).set("x-forwarded-for", otherIp);
+    const blocked = await request(app.getHttpServer()).get(path).set("fly-client-ip", exhaustedIp);
+    const allowed = await request(app.getHttpServer()).get(path).set("fly-client-ip", otherIp);
 
     expect(blocked.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
     expect(allowed.status).toBe(HttpStatus.OK);

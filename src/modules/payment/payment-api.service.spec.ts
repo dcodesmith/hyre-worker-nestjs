@@ -1147,12 +1147,13 @@ describe("PaymentApiService", () => {
       },
     );
 
-    it("rejects self-refund for a paid extension that is not in REFUND_PROCESSING", async () => {
+    it("rejects self-refund for a paid extension whose extension and parent booking are not cancelled", async () => {
       const payment = createPayment({
         bookingId: null,
         extensionId: "extension-123",
         booking: null,
         extension: createExtension({
+          status: "ACTIVE",
           paymentStatus: PaymentStatus.PAID,
         }),
       });
@@ -1164,6 +1165,54 @@ describe("PaymentApiService", () => {
 
       expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
       expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
+    });
+
+    it("allows refunding a paid extension when the parent booking is cancelled and transitions it to REFUND_PROCESSING", async () => {
+      const extension = createExtension({
+        status: "ACTIVE",
+        paymentStatus: PaymentStatus.PAID,
+      });
+      const payment = createPayment({
+        bookingId: null,
+        extensionId: "extension-123",
+        booking: null,
+        extension: {
+          ...extension,
+          bookingLeg: {
+            ...extension.bookingLeg,
+            booking: {
+              ...extension.bookingLeg.booking,
+              status: BookingStatus.CANCELLED,
+            },
+          },
+        },
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+      vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
+      vi.mocked(flutterwaveService.initiateRefund).mockResolvedValueOnce({
+        success: true,
+        refundId: 54321,
+        status: "completed",
+      });
+
+      const result = await service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id);
+
+      expect(result.success).toBe(true);
+      expect(flutterwaveService.initiateRefund).toHaveBeenCalledTimes(1);
+      expect(transactionClient.extension.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "extension-123",
+          OR: [
+            { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+            { paymentStatus: PaymentStatus.PAID, status: "CANCELLED" },
+            {
+              paymentStatus: PaymentStatus.PAID,
+              bookingLeg: { booking: { status: BookingStatus.CANCELLED } },
+            },
+          ],
+        },
+        data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+      });
     });
 
     it.each([
@@ -1206,7 +1255,14 @@ describe("PaymentApiService", () => {
       expect(transactionClient.extension.updateMany).toHaveBeenCalledWith({
         where: {
           id: "extension-123",
-          paymentStatus: PaymentStatus.REFUND_PROCESSING,
+          OR: [
+            { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+            { paymentStatus: PaymentStatus.PAID, status: "CANCELLED" },
+            {
+              paymentStatus: PaymentStatus.PAID,
+              bookingLeg: { booking: { status: BookingStatus.CANCELLED } },
+            },
+          ],
         },
         data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
       });

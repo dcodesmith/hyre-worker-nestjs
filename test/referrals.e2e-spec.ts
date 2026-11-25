@@ -60,7 +60,7 @@ describe("Referrals E2E Tests", () => {
         response = await request(app.getHttpServer())
           .get("/api/referrals/validate/INVAL123")
           .set("Cookie", userCookie)
-          .set("x-forwarded-for", "10.10.10.10");
+          .set("fly-client-ip", "10.10.10.10");
 
         if (response.status === HttpStatus.TOO_MANY_REQUESTS) {
           break;
@@ -97,7 +97,7 @@ describe("Referrals E2E Tests", () => {
       const response = await request(app.getHttpServer())
         .get("/api/referrals/validate/VALIDR01")
         .set("Cookie", freshAuth.cookie)
-        .set("x-forwarded-for", "10.10.10.11")
+        .set("fly-client-ip", "10.10.10.11")
         .query({ email: uniqueEmail("referral-validate-new") });
 
       expect(response.status).toBe(HttpStatus.OK);

@@ -1,4 +1,7 @@
-const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const RIFF_SIGNATURE = Buffer.from([0x52, 0x49, 0x46, 0x46]);
+const WEBP_SIGNATURE = Buffer.from([0x57, 0x45, 0x42, 0x50]);
+const PDF_SIGNATURE = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
 /**
  * Verifies the leading magic bytes of an uploaded file match its declared MIME type.
@@ -16,11 +19,11 @@ export function hasValidFileSignature(buffer: Buffer | undefined, mimetype: stri
     case "image/webp":
       return (
         buffer.length >= 12 &&
-        buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
-        buffer.subarray(8, 12).toString("ascii") === "WEBP"
+        buffer.subarray(0, 4).equals(RIFF_SIGNATURE) &&
+        buffer.subarray(8, 12).equals(WEBP_SIGNATURE)
       );
     case "application/pdf":
-      return buffer.length >= 5 && buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+      return buffer.length >= 5 && buffer.subarray(0, 5).equals(PDF_SIGNATURE);
     default:
       return false;
   }

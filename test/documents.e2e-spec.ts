@@ -17,9 +17,30 @@ describe("Documents E2E Tests", () => {
   let userCookie: string;
   let localPdfServer: Server;
   let localPdfUrl: string;
+  let previousAllowedDocumentOrigins: string | undefined;
   const pdfBody = Buffer.from("%PDF-1.4 test");
 
   beforeAll(async () => {
+    await new Promise<void>((resolve) => {
+      localPdfServer = createServer((_, res) => {
+        res.writeHead(200, {
+          "Content-Type": "application/pdf",
+          "Content-Length": pdfBody.length.toString(),
+        });
+        res.end(pdfBody);
+      });
+      localPdfServer.listen(0, "127.0.0.1", () => {
+        const address = localPdfServer.address();
+        if (address && typeof address !== "string") {
+          localPdfUrl = `http://127.0.0.1:${address.port}/sample.pdf`;
+        }
+        resolve();
+      });
+    });
+
+    previousAllowedDocumentOrigins = process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS;
+    process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS = new URL(localPdfUrl).origin;
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -42,26 +63,14 @@ describe("Documents E2E Tests", () => {
 
     const userAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-user"), "user");
     userCookie = userAuth.cookie;
-
-    await new Promise<void>((resolve) => {
-      localPdfServer = createServer((_, res) => {
-        res.writeHead(200, {
-          "Content-Type": "application/pdf",
-          "Content-Length": pdfBody.length.toString(),
-        });
-        res.end(pdfBody);
-      });
-      localPdfServer.listen(0, "127.0.0.1", () => {
-        const address = localPdfServer.address();
-        if (address && typeof address !== "string") {
-          localPdfUrl = `http://127.0.0.1:${address.port}/sample.pdf`;
-        }
-        resolve();
-      });
-    });
   });
 
   afterAll(async () => {
+    if (previousAllowedDocumentOrigins === undefined) {
+      delete process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS;
+    } else {
+      process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS = previousAllowedDocumentOrigins;
+    }
     await app.close();
     await new Promise<void>((resolve, reject) => {
       localPdfServer.close((error) => {
@@ -123,5 +132,20 @@ describe("Documents E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.OK);
     expect(response.headers["content-type"]).toContain("application/pdf");
+  });
+
+  it("GET /api/proxy-pdf/:documentId rejects untrusted external document URLs", async () => {
+    const document = await databaseService.documentApproval.create({
+      data: {
+        documentType: "INSURANCE_CERTIFICATE",
+        documentUrl: "https://evil.example/secret.pdf",
+      },
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/api/proxy-pdf/${document.id}`)
+      .set("Cookie", adminCookie);
+
+    expect(response.status).toBe(HttpStatus.BAD_GATEWAY);
   });
 });

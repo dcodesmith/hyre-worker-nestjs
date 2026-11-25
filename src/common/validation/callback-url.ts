@@ -32,7 +32,10 @@ export interface CallbackUrlEnv {
 }
 
 function isDevelopmentAppEnv(nodeEnv: string | undefined, env: CallbackUrlEnv): boolean {
-  return nodeEnv !== "production" || env.APP_ENV === "development";
+  if (env.APP_ENV) {
+    return env.APP_ENV === "development";
+  }
+  return nodeEnv === "development" || nodeEnv === "test";
 }
 
 function splitCsv(value: string | undefined): string[] {
@@ -59,10 +62,9 @@ function getAllowedHttpOriginPatterns(nodeEnv: string | undefined, env: Callback
 
   if (isDevelopmentAppEnv(nodeEnv, env)) {
     patterns.push(...splitCsv(env.LOCAL_WEB_ORIGINS));
-  }
-
-  if (nodeEnv !== "production") {
-    patterns.push(...getDevLanOriginPatterns(nodeEnv));
+    if (nodeEnv === "development" || nodeEnv === "test") {
+      patterns.push(...getDevLanOriginPatterns(nodeEnv));
+    }
     if (nodeEnv === "test") {
       patterns.push("http://localhost:*", "http://127.0.0.1:*");
     }
@@ -108,11 +110,13 @@ export function isAllowedCallbackUrl(
   const protocol = parsed.protocol.toLowerCase();
 
   if (protocol === "https:" || protocol === "http:") {
-    if (protocol === "http:" && nodeEnv === "production") {
-      if (env.APP_ENV !== "development") {
+    if (protocol === "http:") {
+      if (!isDevelopmentAppEnv(nodeEnv, env)) {
         return false;
       }
-      return isOriginAllowed(parsed.origin, splitCsv(env.LOCAL_WEB_ORIGINS));
+      if (nodeEnv === "production") {
+        return isOriginAllowed(parsed.origin, splitCsv(env.LOCAL_WEB_ORIGINS));
+      }
     }
 
     const allowedOrigins = getAllowedHttpOriginPatterns(nodeEnv, env);

@@ -337,7 +337,7 @@ export class PaymentApiService {
           select: {
             status: true,
             paymentStatus: true,
-            bookingLeg: { select: { booking: { select: { userId: true } } } },
+            bookingLeg: { select: { booking: { select: { userId: true, status: true } } } },
           },
         },
       },
@@ -399,11 +399,17 @@ export class PaymentApiService {
       throw new RefundDomainStateMismatchException(payment.id);
     }
 
-    if (
-      payment.extensionId &&
-      payment.extension?.paymentStatus !== PaymentStatus.REFUND_PROCESSING
-    ) {
-      throw new RefundDomainStateMismatchException(payment.id);
+    if (payment.extensionId) {
+      const isRefundProcessing =
+        payment.extension?.paymentStatus === PaymentStatus.REFUND_PROCESSING;
+      const isCancelledPaidExtension =
+        payment.extension?.paymentStatus === PaymentStatus.PAID &&
+        (payment.extension.status === "CANCELLED" ||
+          payment.extension.bookingLeg?.booking?.status === BookingStatus.CANCELLED);
+
+      if (!isRefundProcessing && !isCancelledPaidExtension) {
+        throw new RefundDomainStateMismatchException(payment.id);
+      }
     }
   }
 
@@ -460,7 +466,19 @@ export class PaymentApiService {
         const extensionUpdate = await tx.extension.updateMany({
           where: {
             id: payment.extensionId,
-            paymentStatus: PaymentStatus.REFUND_PROCESSING,
+            OR: [
+              { paymentStatus: PaymentStatus.REFUND_PROCESSING },
+              {
+                paymentStatus: PaymentStatus.PAID,
+                status: "CANCELLED",
+              },
+              {
+                paymentStatus: PaymentStatus.PAID,
+                bookingLeg: {
+                  booking: { status: BookingStatus.CANCELLED },
+                },
+              },
+            ],
           },
           data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
         });

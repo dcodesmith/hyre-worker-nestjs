@@ -45,6 +45,9 @@ describe("DocumentProxyService", () => {
   const configServiceMock = {
     get: vi.fn((key: string) => {
       if (key === "ASSET_PUBLIC_BASE_URL") return ALLOWED_ASSET_BASE_URL;
+      if (key === "DOCUMENT_PROXY_ALLOWED_ORIGINS") {
+        return ["https://legacy-docs.example.com"];
+      }
       if (key === "NODE_ENV") return "production";
       return undefined;
     }),
@@ -115,6 +118,29 @@ describe("DocumentProxyService", () => {
     expect(result.fileName).toBe("sample.pdf");
     expect(result.contentType).toBe("application/pdf");
     expect(result.contentLength).toBe(8);
+    expect(result.stream).toBe(stream);
+  });
+
+  it("allows legacy first-party document URLs configured in DOCUMENT_PROXY_ALLOWED_ORIGINS", async () => {
+    const legacyUrl = "https://legacy-docs.example.com/owner/doc.pdf";
+    vi.mocked(documentApprovalMock.findUnique).mockResolvedValue(
+      createMockDocumentApprovalData({ documentUrl: legacyUrl }),
+    );
+    const stream = Readable.from(Buffer.from("%PDF-1.4"));
+    vi.mocked(httpClientMock.get).mockResolvedValue({
+      data: stream,
+      headers: {
+        "content-type": "application/pdf",
+        "content-length": "8",
+      },
+    });
+
+    const result = await service.getPdfByDocumentId("doc-legacy");
+
+    expect(httpClientMock.get).toHaveBeenCalledWith(legacyUrl, {
+      responseType: "stream",
+      maxRedirects: 0,
+    });
     expect(result.stream).toBe(stream);
   });
 

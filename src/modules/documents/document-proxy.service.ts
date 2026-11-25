@@ -99,14 +99,13 @@ export class DocumentProxyService {
   }
 
   private isAllowedHttpDocumentUrl(documentUrl: string): boolean {
-    const assetBaseUrl = this.configService.get("ASSET_PUBLIC_BASE_URL", { infer: true });
-    if (!assetBaseUrl) {
+    const allowedOrigins = this.getAllowedHttpDocumentOrigins();
+    if (allowedOrigins.size === 0) {
       return false;
     }
 
     try {
       const parsedTarget = new URL(documentUrl);
-      const parsedAllowedBase = new URL(assetBaseUrl);
 
       if (parsedTarget.username || parsedTarget.password) {
         return false;
@@ -119,10 +118,34 @@ export class DocumentProxyService {
         return false;
       }
 
-      return parsedTarget.origin === parsedAllowedBase.origin;
+      return allowedOrigins.has(parsedTarget.origin);
     } catch {
       return false;
     }
+  }
+
+  private getAllowedHttpDocumentOrigins(): Set<string> {
+    const origins = new Set<string>();
+    const assetBaseUrl = this.configService.get("ASSET_PUBLIC_BASE_URL", { infer: true });
+    if (assetBaseUrl) {
+      try {
+        origins.add(new URL(assetBaseUrl).origin);
+      } catch {
+        // Ignore malformed configuration value
+      }
+    }
+
+    const legacyOrigins =
+      this.configService.get("DOCUMENT_PROXY_ALLOWED_ORIGINS", { infer: true }) ?? [];
+    for (const origin of legacyOrigins) {
+      try {
+        origins.add(new URL(origin).origin);
+      } catch {
+        // Ignore malformed configuration value
+      }
+    }
+
+    return origins;
   }
 
   private isHttpUrl(value: string): boolean {

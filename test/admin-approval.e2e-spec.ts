@@ -21,7 +21,10 @@ describe("Admin Approval E2E Tests", () => {
   let otherOwnerCookie: string;
 
   const pdfBuffer = Buffer.from("%PDF-1.4 replacement");
-  const imageBuffer = Buffer.from("fake-image-bytes");
+  const imageBuffer = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+    Buffer.from("fake-image-bytes"),
+  ]);
   const deleteObjectByKey = vi.fn().mockResolvedValue(undefined);
 
   beforeAll(async () => {
