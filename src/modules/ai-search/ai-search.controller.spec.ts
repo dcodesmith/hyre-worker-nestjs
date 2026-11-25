@@ -6,6 +6,7 @@ import { AiSearchController } from "./ai-search.controller";
 import { AiSearchService } from "./ai-search.service";
 import { AiSearchThrottlerGuard } from "./ai-search-throttler.guard";
 import { AI_SEARCH_THROTTLE_CONFIG } from "./ai-search-throttling.config";
+import { aiSearchBodySchema } from "./dto/ai-search.dto";
 
 describe("AiSearchController", () => {
   let controller: AiSearchController;
@@ -49,5 +50,10 @@ describe("AiSearchController", () => {
     expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
     expect(aiSearchService.search).toHaveBeenCalledWith("toyota");
     expect(result.params.make).toBe("Toyota");
+  });
+
+  it("rejects AI search queries longer than 500 characters", () => {
+    expect(aiSearchBodySchema.safeParse({ query: "a".repeat(500) }).success).toBe(true);
+    expect(aiSearchBodySchema.safeParse({ query: "a".repeat(501) }).success).toBe(false);
   });
 });

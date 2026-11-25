@@ -9,10 +9,11 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
+import { Throttle } from "@nestjs/throttler";
 import { BookingCompletionSource } from "@prisma/client";
 import { z } from "zod";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
+import { ClientIpThrottlerGuard } from "../../common/throttling/client-ip-throttler.guard";
 import { ADMIN, FLEET_OWNER, STAFF } from "../auth/auth.const";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -35,7 +36,7 @@ const completionTokenQuerySchema = z.object({
 type CompletionTokenQuery = z.infer<typeof completionTokenQuerySchema>;
 
 @Controller("chauffeur/airport-trips")
-@UseGuards(ThrottlerGuard)
+@UseGuards(ClientIpThrottlerGuard)
 @Throttle({ default: { limit: 10, ttl: 60_000 } })
 export class AirportTripCompletionPageController {
   private readonly logger = new Logger(AirportTripCompletionPageController.name);
@@ -44,6 +45,8 @@ export class AirportTripCompletionPageController {
 
   @Get(":bookingId/complete")
   @Header("Content-Type", "text/html; charset=utf-8")
+  @Header("Cache-Control", "private, no-store")
+  @Header("Referrer-Policy", "no-referrer")
   async showCompletionPage(
     @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,
     @ZodQuery(completionTokenQuerySchema) query: CompletionTokenQuery,
@@ -54,6 +57,8 @@ export class AirportTripCompletionPageController {
   @Post(":bookingId/complete")
   @HttpCode(HttpStatus.OK)
   @Header("Content-Type", "text/html; charset=utf-8")
+  @Header("Cache-Control", "private, no-store")
+  @Header("Referrer-Policy", "no-referrer")
   async completeFromPage(
     @ZodParam("bookingId", bookingIdParamSchema) bookingId: string,
     @ZodBody(completionTokenQuerySchema) body: CompletionTokenQuery,

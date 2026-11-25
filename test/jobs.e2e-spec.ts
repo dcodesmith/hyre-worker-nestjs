@@ -32,12 +32,21 @@ describe("Jobs E2E Tests", () => {
     { type: "complete-bookings", message: "Complete bookings job triggered" },
   ] as const;
 
+  const apiKey = process.env.API_KEY ?? "";
+
+  it("should reject requests without a valid API key", async () => {
+    await request(app.getHttpServer())
+      .post("/job/trigger/start-reminders")
+      .expect(HttpStatus.UNAUTHORIZED);
+  });
+
   describe.each(jobTypes)("/POST /job/trigger/$type", ({ type, message }) => {
     it("should enforce rate limiting", async () => {
       const endpoint = `/job/trigger/${type}`;
 
       const firstResponse = await request(app.getHttpServer())
         .post(endpoint)
+        .set("x-api-key", apiKey)
         .expect(HttpStatus.ACCEPTED);
 
       expect(firstResponse.body).toStrictEqual({
@@ -50,7 +59,9 @@ describe("Jobs E2E Tests", () => {
         ),
       ).toStrictEqual(["x-ratelimit-limit-manual-triggers"]);
 
-      const secondResponse = await request(app.getHttpServer()).post(endpoint);
+      const secondResponse = await request(app.getHttpServer())
+        .post(endpoint)
+        .set("x-api-key", apiKey);
 
       expect(secondResponse.body).toMatchObject({
         type: "JOB.RATE_LIMIT.EXCEEDED",

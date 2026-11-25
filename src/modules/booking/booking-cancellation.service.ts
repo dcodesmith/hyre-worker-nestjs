@@ -1,7 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentStatus, type Prisma, Status } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { omitStoredClientContext } from "../../common/client-request";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingCancellationHandler } from "../notification/handlers/booking-cancellation.handler";
 import { NotificationOutboxService } from "../notification/notification-outbox.service";
@@ -12,6 +11,7 @@ import {
   BookingStatusNotModifiableException,
   ExtensionPaymentPendingException,
 } from "./booking.error";
+import { sanitizeBookingResponse } from "./booking-contact-privacy.helper";
 import { BookingEligibilityService } from "./booking-eligibility.service";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
@@ -139,7 +139,7 @@ export class BookingCancellationService {
 
         const responseNow = await getDatabaseNow(tx);
         return {
-          ...omitStoredClientContext(updatedBooking),
+          ...sanitizeBookingResponse(updatedBooking, { redactCustomerContacts: false }),
           ...this.bookingModificationPolicyService.getEligibility(
             updatedBooking,
             true,

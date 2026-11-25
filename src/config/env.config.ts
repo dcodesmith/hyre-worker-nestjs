@@ -258,7 +258,7 @@ export const envSchema = z
       })
       .default(false),
 
-    API_KEY: z.string().min(8, "API_KEY must be at least 32 characters").optional(),
+    API_KEY: z.string().min(8, "API_KEY must be at least 8 characters").optional(),
 
     BULL_BOARD_USERNAME: z.string().min(1).optional(),
     BULL_BOARD_PASSWORD: z
@@ -323,6 +323,20 @@ export const envSchema = z
         .optional(),
     ),
     ASSET_PUBLIC_BASE_URL: z.url("ASSET_PUBLIC_BASE_URL must be a valid URL"),
+    DOCUMENT_PROXY_ALLOWED_ORIGINS: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      )
+      .pipe(
+        z
+          .array(z.url("DOCUMENT_PROXY_ALLOWED_ORIGINS entries must be valid URLs"))
+          .transform((urls) => [...new Set(urls.map((entry) => new URL(entry).origin))]),
+      ),
 
     // Booking agent configuration
     ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required for booking agent"),

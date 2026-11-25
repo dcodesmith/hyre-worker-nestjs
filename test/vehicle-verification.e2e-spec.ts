@@ -16,7 +16,10 @@ import { VerificationErrorCode } from "../src/modules/verification/verification.
 import { TestDataFactory, uniqueEmail } from "./helpers";
 
 const PDF_BUFFER = Buffer.from("%PDF-1.4 test-certificate");
-const IMAGE_BUFFER = Buffer.from("fake-jpeg-bytes");
+const IMAGE_BUFFER = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  Buffer.from("fake-jpeg-bytes"),
+]);
 const FUTURE_INSURANCE_EXPIRY = new Date("2099-12-31T00:00:00.000Z");
 
 describe("Vehicle verification E2E Tests", () => {

@@ -1,4 +1,5 @@
-import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { ThrottlerStorage } from "@nestjs/throttler";
 import { InjectThrottlerStorage } from "@nestjs/throttler";
 import type { Response } from "express";
@@ -8,6 +9,7 @@ import {
   isThrottled,
   setRateLimitHeaders,
 } from "../../common/throttling/throttling.helper";
+import type { EnvConfig } from "../../config/env.config";
 import { AUTH_SESSION_KEY, type AuthSession } from "../auth/guards/session.guard";
 import { ReferralRateLimitExceededException } from "./referral.error";
 import type { ReferralThrottleRequestContext } from "./referral.interface";
@@ -18,6 +20,7 @@ export class ReferralThrottlerGuard implements CanActivate {
   constructor(
     @InjectThrottlerStorage()
     private readonly throttlerStorage: ThrottlerStorage,
+    @Optional() private readonly configService?: ConfigService<EnvConfig>,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -28,7 +31,10 @@ export class ReferralThrottlerGuard implements CanActivate {
     >();
     const response = context.switchToHttp().getResponse<Response>();
 
-    const ipTracker = getClientIp(request);
+    const ipTracker = getClientIp(
+      request,
+      this.configService?.get("EDGE_CLIENT_SECRET", { infer: true }),
+    );
     const userTracker = this.getUserTracker(request);
     const routePath = request.route?.path || "validate";
     const method = request.method || "GET";

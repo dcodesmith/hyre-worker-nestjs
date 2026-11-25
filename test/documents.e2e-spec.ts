@@ -1,9 +1,11 @@
 import { createServer, type Server } from "node:http";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
+import type { EnvConfig } from "../src/config/env.config";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -17,32 +19,10 @@ describe("Documents E2E Tests", () => {
   let userCookie: string;
   let localPdfServer: Server;
   let localPdfUrl: string;
+  let previousAllowedDocumentOrigins: string | undefined;
   const pdfBody = Buffer.from("%PDF-1.4 test");
 
   beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideProvider(AuthEmailService)
-      .useValue({ sendOTPEmail: vi.fn().mockResolvedValue(undefined) })
-      .compile();
-
-    app = moduleFixture.createNestApplication({ logger: false });
-
-    databaseService = app.get(DatabaseService);
-    factory = new TestDataFactory(databaseService, app);
-    await app.init();
-
-    const adminAuth = await factory.createAuthenticatedAdmin(uniqueEmail("doc-admin"));
-    adminCookie = adminAuth.cookie;
-
-    const staffAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-staff"), "user");
-    await factory.assignRole(staffAuth.user.id, "staff");
-    staffCookie = staffAuth.cookie;
-
-    const userAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-user"), "user");
-    userCookie = userAuth.cookie;
-
     await new Promise<void>((resolve) => {
       localPdfServer = createServer((_, res) => {
         res.writeHead(200, {
@@ -59,9 +39,42 @@ describe("Documents E2E Tests", () => {
         resolve();
       });
     });
+
+    previousAllowedDocumentOrigins = process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS;
+
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(AuthEmailService)
+      .useValue({ sendOTPEmail: vi.fn().mockResolvedValue(undefined) })
+      .compile();
+
+    app = moduleFixture.createNestApplication({ logger: false });
+
+    const configService = app.get<ConfigService<EnvConfig>>(ConfigService);
+    configService.set("DOCUMENT_PROXY_ALLOWED_ORIGINS", [new URL(localPdfUrl).origin]);
+
+    databaseService = app.get(DatabaseService);
+    factory = new TestDataFactory(databaseService, app);
+    await app.init();
+
+    const adminAuth = await factory.createAuthenticatedAdmin(uniqueEmail("doc-admin"));
+    adminCookie = adminAuth.cookie;
+
+    const staffAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-staff"), "user");
+    await factory.assignRole(staffAuth.user.id, "staff");
+    staffCookie = staffAuth.cookie;
+
+    const userAuth = await factory.authenticateAndGetUser(uniqueEmail("doc-user"), "user");
+    userCookie = userAuth.cookie;
   });
 
   afterAll(async () => {
+    if (previousAllowedDocumentOrigins === undefined) {
+      delete process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS;
+    } else {
+      process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS = previousAllowedDocumentOrigins;
+    }
     await app.close();
     await new Promise<void>((resolve, reject) => {
       localPdfServer.close((error) => {
@@ -123,5 +136,20 @@ describe("Documents E2E Tests", () => {
 
     expect(response.status).toBe(HttpStatus.OK);
     expect(response.headers["content-type"]).toContain("application/pdf");
+  });
+
+  it("GET /api/proxy-pdf/:documentId rejects untrusted external document URLs", async () => {
+    const document = await databaseService.documentApproval.create({
+      data: {
+        documentType: "INSURANCE_CERTIFICATE",
+        documentUrl: "https://evil.example/secret.pdf",
+      },
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/api/proxy-pdf/${document.id}`)
+      .set("Cookie", adminCookie);
+
+    expect(response.status).toBe(HttpStatus.BAD_GATEWAY);
   });
 });

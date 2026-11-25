@@ -1,5 +1,5 @@
 import { ExecutionContext, Injectable } from "@nestjs/common";
-import { ThrottlerGuard } from "@nestjs/throttler";
+import { ClientIpThrottlerGuard } from "../../common/throttling/client-ip-throttler.guard";
 import { computeRetryAfterEpoch } from "../../common/throttling/throttling.helper";
 import { JobRateLimitExceededException } from "./errors";
 import { JOB_THROTTLE_CONFIG } from "./job-throttling.config";
@@ -21,7 +21,7 @@ import { JOB_THROTTLE_CONFIG } from "./job-throttling.config";
  * use the same route pattern (/job/trigger/:jobType)
  */
 @Injectable()
-export class JobThrottlerGuard extends ThrottlerGuard {
+export class JobThrottlerGuard extends ClientIpThrottlerGuard {
   async onModuleInit(): Promise<void> {
     await super.onModuleInit();
 

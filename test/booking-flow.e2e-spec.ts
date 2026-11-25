@@ -286,7 +286,7 @@ describe("Booking Flow E2E", () => {
       .send({
         hours: 2,
         bookingLegId: targetLeg.id,
-        callbackUrl: "https://example.com/extension-payment-status",
+        callbackUrl: "http://localhost:3000/extension-payment-status",
       });
 
     expect(extendResponse.status).toBe(HttpStatus.CREATED);

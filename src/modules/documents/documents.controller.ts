@@ -22,11 +22,12 @@ export class DocumentsController {
     const proxiedFile = await this.documentProxyService.getPdfByDocumentId(documentId);
 
     response.setHeader("Content-Type", proxiedFile.contentType);
+    response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader(
       "Content-Disposition",
       `inline; filename="${this.escapeFilenameForHeader(proxiedFile.fileName)}"`,
     );
-    response.setHeader("Cache-Control", "max-age=300");
+    response.setHeader("Cache-Control", "private, no-store");
 
     if (proxiedFile.contentLength !== undefined) {
       response.setHeader("Content-Length", proxiedFile.contentLength.toString());

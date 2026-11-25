@@ -136,7 +136,7 @@ describe("Payments E2E Tests", () => {
           type: "booking",
           entityId: testBookingId,
           amount: 50000,
-          callbackUrl: "https://example.com/callback",
+          callbackUrl: "http://localhost:3000/callback",
         });
 
       expect(response.status).toBe(HttpStatus.CREATED);
@@ -152,7 +152,7 @@ describe("Payments E2E Tests", () => {
           type: "booking",
           entityId: testBookingId,
           amount: 50000,
-          callbackUrl: "https://example.com/callback",
+          callbackUrl: "http://localhost:3000/callback",
         });
 
       expect(response.status).toBe(HttpStatus.FORBIDDEN);
@@ -411,7 +411,25 @@ describe("Payments E2E Tests", () => {
       });
     });
 
-    it("should initiate refund for booking owner", async () => {
+    it("should reject refund for a non-cancelled booking", async () => {
+      await databaseService.booking.update({
+        where: { id: testBookingId },
+        data: { status: "CONFIRMED", paymentStatus: "PAID" },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/payments/${successfulPaymentTxRef}/refund`)
+        .set("Cookie", testUserCookie)
+        .send({ amount: 25000, reason: "Unauthorized self-refund" });
+
+      expect(response.status).toBe(HttpStatus.CONFLICT);
+    });
+
+    it("should initiate refund for cancelled booking owner", async () => {
+      await databaseService.booking.update({
+        where: { id: testBookingId },
+        data: { status: "CANCELLED", paymentStatus: "REFUND_PROCESSING" },
+      });
       const mockRefundResult = {
         success: true,
         refundId: 12345,
@@ -432,7 +450,7 @@ describe("Payments E2E Tests", () => {
     it("should atomically record an operations notification for an explicit provider rejection", async () => {
       await databaseService.booking.update({
         where: { id: testBookingId },
-        data: { paymentStatus: "PAID" },
+        data: { status: "CANCELLED", paymentStatus: "REFUND_PROCESSING" },
       });
       const payment = await factory.createPayment(testBookingId, {
         amountExpected: 50000,

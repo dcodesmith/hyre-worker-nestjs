@@ -78,6 +78,11 @@ describe("ReviewsReadService", () => {
       | undefined;
     expect(listQueryArgs?.where.booking.carId).toBe("car-1");
     expect(listQueryArgs?.where.booking.chauffeurId).toBeUndefined();
+    const listSelect = (listQueryArgs as { select?: Record<string, unknown> } | undefined)?.select;
+    expect(listSelect).toBeDefined();
+    expect(listSelect?.moderatedBy).toBeUndefined();
+    expect(listSelect?.moderatedAt).toBeUndefined();
+    expect(listSelect?.moderationNotes).toBeUndefined();
   });
 
   it("uses restricted select shape for review-by-id details", async () => {
@@ -92,6 +97,9 @@ describe("ReviewsReadService", () => {
 
     expect(firstCallArgs?.where).toEqual({ id: "review-1", isVisible: true });
     expect(firstCallArgs?.select).toBeDefined();
+    expect((firstCallArgs?.select as Record<string, unknown>)?.moderatedBy).toBeUndefined();
+    expect((firstCallArgs?.select as Record<string, unknown>)?.moderatedAt).toBeUndefined();
+    expect((firstCallArgs?.select as Record<string, unknown>)?.moderationNotes).toBeUndefined();
     expect(firstCallArgs?.select?.booking?.select?.car?.select).toEqual({
       id: true,
       make: true,

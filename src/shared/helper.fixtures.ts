@@ -333,7 +333,12 @@ export function createPayment(overrides: Partial<PaymentWithRelations> = {}): Pa
     refundReconciliationAttempts: 0,
     refundVerificationFailures: 0,
     refundManualReviewNotifiedAt: null,
-    booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "user-123" },
+    booking: {
+      id: "booking-123",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      userId: "user-123",
+    },
     extension: null,
     ...overrides,
   };

@@ -666,3 +666,41 @@ describe("envSchema verification intervention encryption key", () => {
     }
   });
 });
+
+describe("envSchema API_KEY", () => {
+  it("requires at least 8 characters when API_KEY is provided", () => {
+    const tooShort = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      API_KEY: "short-7",
+    });
+    expect(tooShort.success).toBe(false);
+
+    const valid = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      API_KEY: "a".repeat(8),
+    });
+    expect(valid.success).toBe(true);
+  });
+});
+
+describe("envSchema DOCUMENT_PROXY_ALLOWED_ORIGINS", () => {
+  it("defaults to an empty array and normalizes configured legacy document origins", () => {
+    const defaults = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+    });
+    expect(defaults.DOCUMENT_PROXY_ALLOWED_ORIGINS).toEqual([]);
+
+    const parsed = envSchema.parse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      DOCUMENT_PROXY_ALLOWED_ORIGINS:
+        "https://legacy-bucket.s3.eu-west-2.amazonaws.com/path, https://legacy-bucket.s3.eu-west-2.amazonaws.com",
+    });
+    expect(parsed.DOCUMENT_PROXY_ALLOWED_ORIGINS).toEqual([
+      "https://legacy-bucket.s3.eu-west-2.amazonaws.com",
+    ]);
+  });
+});

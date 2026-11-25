@@ -72,7 +72,7 @@ describe("Maps E2E Tests", () => {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       response = await request(app.getHttpServer())
         .get("/api/calculate-trip-duration?destination=Victoria%20Island%2C%20Lagos")
-        .set("x-forwarded-for", "198.51.100.21");
+        .set("fly-client-ip", "198.51.100.21");
 
       if (response.status === HttpStatus.TOO_MANY_REQUESTS) {
         break;
@@ -103,13 +103,11 @@ describe("Maps E2E Tests", () => {
     const path = "/api/calculate-trip-duration?destination=Victoria%20Island%2C%20Lagos";
 
     for (let attempt = 0; attempt < TRIP_DURATION_THROTTLE_CONFIG.limit + 1; attempt += 1) {
-      await request(app.getHttpServer()).get(path).set("x-forwarded-for", exhaustedIp);
+      await request(app.getHttpServer()).get(path).set("fly-client-ip", exhaustedIp);
     }
 
-    const blocked = await request(app.getHttpServer())
-      .get(path)
-      .set("x-forwarded-for", exhaustedIp);
-    const allowed = await request(app.getHttpServer()).get(path).set("x-forwarded-for", otherIp);
+    const blocked = await request(app.getHttpServer()).get(path).set("fly-client-ip", exhaustedIp);
+    const allowed = await request(app.getHttpServer()).get(path).set("fly-client-ip", otherIp);
 
     expect(blocked.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
     expect(allowed.status).toBe(HttpStatus.OK);

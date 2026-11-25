@@ -21,7 +21,11 @@ import { RoleGuard } from "../auth/guards/role.guard";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
 import { VerifiedFleetOwnerGuard } from "../auth/guards/verified-fleet-owner.guard";
-import { CAR_DOCUMENT_UPLOAD_FIELD_CONFIG, MAX_IMAGE_COUNT } from "./car.const";
+import {
+  CAR_DOCUMENT_UPLOAD_FIELD_CONFIG,
+  MAX_FILE_SIZE_BYTES,
+  MAX_IMAGE_COUNT,
+} from "./car.const";
 import type { CarDocumentFiles, UploadedCarFile } from "./car.interface";
 import { CarService } from "./car.service";
 import { CarDocumentsPipe } from "./car-documents.pipe";
@@ -68,7 +72,14 @@ export class FleetOwnerCarController {
 
   @Post(":carId/documents")
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileFieldsInterceptor([...CAR_DOCUMENT_UPLOAD_FIELD_CONFIG]))
+  @UseInterceptors(
+    FileFieldsInterceptor([...CAR_DOCUMENT_UPLOAD_FIELD_CONFIG], {
+      limits: {
+        fileSize: MAX_FILE_SIZE_BYTES,
+        files: CAR_DOCUMENT_UPLOAD_FIELD_CONFIG.length,
+      },
+    }),
+  )
   async uploadDraftCarDocuments(
     @ZodParam("carId", carIdParamSchema) carId: string,
     @UploadedFiles(new CarDocumentsPipe()) files: CarDocumentFiles,
@@ -78,7 +89,11 @@ export class FleetOwnerCarController {
   }
 
   @Post(":carId/images")
-  @UseInterceptors(FilesInterceptor("images", MAX_IMAGE_COUNT))
+  @UseInterceptors(
+    FilesInterceptor("images", MAX_IMAGE_COUNT, {
+      limits: { fileSize: MAX_FILE_SIZE_BYTES, files: MAX_IMAGE_COUNT },
+    }),
+  )
   async uploadDraftCarImages(
     @ZodParam("carId", carIdParamSchema) carId: string,
     @UploadedFiles(new CarImagesPipe()) images: UploadedCarFile[],
@@ -105,7 +120,7 @@ export class FleetOwnerCarController {
   }
 
   @Put(":carId/images/:imageId/file")
-  @UseInterceptors(FileInterceptor("file"))
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 1 } }))
   async replaceCarImage(
     @ZodParam("carId", carIdParamSchema) carId: string,
     @ZodParam("imageId", uuidParamSchema) imageId: string,
@@ -116,7 +131,7 @@ export class FleetOwnerCarController {
   }
 
   @Put(":carId/documents/:documentId/file")
-  @UseInterceptors(FileInterceptor("file"))
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 1 } }))
   async replaceCarDocument(
     @ZodParam("carId", carIdParamSchema) carId: string,
     @ZodParam("documentId", uuidParamSchema) documentId: string,

@@ -1135,7 +1135,7 @@ describe("Bookings E2E Tests", () => {
   });
 
   describe("Booking extension eligibility", () => {
-    const extensionCallbackUrl = "https://example.com/extension-payment-status";
+    const extensionCallbackUrl = "http://localhost:3000/extension-payment-status";
 
     beforeEach(() => {
       vi.mocked(flutterwaveService.createPaymentIntent).mockImplementation(async (options) => {
