@@ -20,13 +20,19 @@ const blockedProtocols = new Set([
   "wss:",
 ]);
 
-const DEFAULT_MOBILE_SCHEMES = new Set(["hyreapp:", "tripdly:"]);
+const DEFAULT_MOBILE_SCHEMES = new Set(["hyremobile:", "hyreapp:", "tripdly:"]);
+const DEV_MOBILE_SCHEMES = new Set(["exp:"]);
 const customSchemePattern = /^[a-z][a-z0-9+.-]*:$/;
 
 export interface CallbackUrlEnv {
+  APP_ENV?: string;
   TRUSTED_ORIGINS?: string;
   WEBSITE_URL?: string;
   LOCAL_WEB_ORIGINS?: string;
+}
+
+function isDevelopmentAppEnv(nodeEnv: string | undefined, env: CallbackUrlEnv): boolean {
+  return nodeEnv !== "production" || env.APP_ENV === "development";
 }
 
 function splitCsv(value: string | undefined): string[] {
@@ -51,8 +57,11 @@ function getAllowedHttpOriginPatterns(nodeEnv: string | undefined, env: Callback
     patterns.push(websiteUrl);
   }
 
-  if (nodeEnv !== "production") {
+  if (isDevelopmentAppEnv(nodeEnv, env)) {
     patterns.push(...splitCsv(env.LOCAL_WEB_ORIGINS));
+  }
+
+  if (nodeEnv !== "production") {
     patterns.push(...getDevLanOriginPatterns(nodeEnv));
     if (nodeEnv === "test") {
       patterns.push("http://localhost:*", "http://127.0.0.1:*");
@@ -62,8 +71,13 @@ function getAllowedHttpOriginPatterns(nodeEnv: string | undefined, env: Callback
   return patterns;
 }
 
-function getAllowedMobileSchemes(env: CallbackUrlEnv): Set<string> {
+function getAllowedMobileSchemes(nodeEnv: string | undefined, env: CallbackUrlEnv): Set<string> {
   const schemes = new Set(DEFAULT_MOBILE_SCHEMES);
+  if (isDevelopmentAppEnv(nodeEnv, env)) {
+    for (const scheme of DEV_MOBILE_SCHEMES) {
+      schemes.add(scheme);
+    }
+  }
   for (const entry of splitCsv(env.TRUSTED_ORIGINS)) {
     const schemeMatch = /^([a-z][a-z0-9+.-]*):\/\//i.exec(entry);
     if (!schemeMatch) continue;
@@ -95,7 +109,10 @@ export function isAllowedCallbackUrl(
 
   if (protocol === "https:" || protocol === "http:") {
     if (protocol === "http:" && nodeEnv === "production") {
-      return false;
+      if (env.APP_ENV !== "development") {
+        return false;
+      }
+      return isOriginAllowed(parsed.origin, splitCsv(env.LOCAL_WEB_ORIGINS));
     }
 
     const allowedOrigins = getAllowedHttpOriginPatterns(nodeEnv, env);
@@ -109,7 +126,7 @@ export function isAllowedCallbackUrl(
   return (
     customSchemePattern.test(protocol) &&
     value.includes("://") &&
-    getAllowedMobileSchemes(env).has(protocol)
+    getAllowedMobileSchemes(nodeEnv, env).has(protocol)
   );
 }
 
