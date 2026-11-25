@@ -57,15 +57,15 @@ async function createGuard(apiKey: string | undefined): Promise<ApiKeyGuard> {
 
 describe("ApiKeyGuard", () => {
   describe("when API_KEY is not configured", () => {
-    it("should allow all requests", async () => {
+    it("should fail closed with UnauthorizedException", async () => {
       const testGuard = await createGuard(undefined);
 
       const request = createMockRequest({});
       const mockExecutionContext = createMockExecutionContext(request);
 
-      const result = testGuard.canActivate(mockExecutionContext);
-
-      expect(result).toBe(true);
+      expect(() => testGuard.canActivate(mockExecutionContext)).toThrow(
+        new UnauthorizedException("API key authentication is not configured"),
+      );
     });
   });
 
@@ -124,6 +124,19 @@ describe("ApiKeyGuard", () => {
       const testGuard = await createGuard(validApiKey);
       const request = createMockRequest({
         "x-api-key": "short",
+      });
+
+      const mockExecutionContext = createMockExecutionContext(request);
+
+      expect(() => testGuard.canActivate(mockExecutionContext)).toThrow(
+        new UnauthorizedException("Invalid API key"),
+      );
+    });
+
+    it("should reject multi-byte UTF-8 API key of equal string length without throwing RangeError", async () => {
+      const testGuard = await createGuard(validApiKey);
+      const request = createMockRequest({
+        "x-api-key": "tést-api-key-12345",
       });
 
       const mockExecutionContext = createMockExecutionContext(request);

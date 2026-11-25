@@ -2,7 +2,10 @@ import { ExpressAdapter } from "@bull-board/express";
 import { BullBoardModule } from "@bull-board/nestjs";
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { createBullBoardAuthMiddleware } from "../../../common/middlewares/bull-board-auth.middleware";
+import {
+  createBullBoardAuthMiddleware,
+  createBullBoardDisabledMiddleware,
+} from "../../../common/middlewares/bull-board-auth.middleware";
 import { type EnvConfig } from "../../../config/env.config";
 
 @Module({
@@ -16,7 +19,7 @@ import { type EnvConfig } from "../../../config/env.config";
         const middleware =
           bullBoardUsername && bullBoardPassword
             ? createBullBoardAuthMiddleware(bullBoardUsername, bullBoardPassword)
-            : undefined;
+            : createBullBoardDisabledMiddleware();
 
         return {
           route: "/queues",

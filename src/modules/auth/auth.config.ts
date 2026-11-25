@@ -109,6 +109,10 @@ function cleanupExpiredPendingRoles(): void {
   }
 }
 
+function normalizePendingRoleEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 /**
  * Stores a pending role for an email address.
  * Called from the before hook after successful validation.
@@ -118,7 +122,7 @@ function setPendingRole(email: string, role: RoleName): void {
   if (pendingRoles.size > 100) {
     cleanupExpiredPendingRoles();
   }
-  pendingRoles.set(email, { role, timestamp: Date.now() });
+  pendingRoles.set(normalizePendingRoleEmail(email), { role, timestamp: Date.now() });
 }
 
 /**
@@ -127,9 +131,10 @@ function setPendingRole(email: string, role: RoleName): void {
  * Returns USER as default if no valid pending role exists.
  */
 function consumePendingRole(email: string): RoleName {
-  const entry = pendingRoles.get(email);
+  const normalizedEmail = normalizePendingRoleEmail(email);
+  const entry = pendingRoles.get(normalizedEmail);
   if (entry) {
-    pendingRoles.delete(email);
+    pendingRoles.delete(normalizedEmail);
     // Only return role if not expired
     if (Date.now() - entry.timestamp <= PENDING_ROLE_TTL_MS) {
       return entry.role;
@@ -443,6 +448,8 @@ export function createAuth(options: AuthConfigOptions) {
       customRules: {
         "/email-otp/send-verification-otp": { window: 60, max: 5 },
         "/email-otp/check-verification-otp": { window: 60, max: 10 },
+        "/email-otp/verify-email": { window: 60, max: 10 },
+        "/sign-in/email-otp": { window: 60, max: 10 },
       },
     },
     advanced: {

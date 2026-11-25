@@ -13,10 +13,11 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
+import { Throttle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { readClientRequest } from "../../common/client-request";
 import { ZodBody, ZodParam, ZodQuery } from "../../common/decorators/zod-validation.decorator";
+import { ClientIpThrottlerGuard } from "../../common/throttling/client-ip-throttler.guard";
 import type { EnvConfig } from "../../config/env.config";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
@@ -230,7 +231,7 @@ export class BookingController {
 
   @Post("guest-access")
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ClientIpThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 10 * 60_000 } })
   requestGuestBookingAccess(
     @ZodBody(guestBookingAccessRequestSchema) body: GuestBookingAccessRequestDto,
@@ -240,7 +241,7 @@ export class BookingController {
 
   @Get("guest-access")
   @Header("Cache-Control", "no-store")
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ClientIpThrottlerGuard)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   getGuestBooking(
     @ZodQuery(guestBookingAccessQuerySchema) query: GuestBookingAccessQueryDto,

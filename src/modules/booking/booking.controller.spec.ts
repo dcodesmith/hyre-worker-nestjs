@@ -2,12 +2,12 @@ import { RequestMethod, UnauthorizedException } from "@nestjs/common";
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
-import { ThrottlerGuard } from "@nestjs/throttler";
 import { BookingStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockPinoLoggerToken } from "@/testing/nest-pino-logger.mock";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import { ClientIpThrottlerGuard } from "../../common/throttling/client-ip-throttler.guard";
 import { AuthService } from "../auth/auth.service";
 import { OptionalSessionGuard } from "../auth/guards/optional-session.guard";
 import { PhoneVerificationService } from "../verification/phone-verification.service";
@@ -171,7 +171,7 @@ describe("BookingController", () => {
         OptionalSessionGuard,
       ],
     })
-      .overrideGuard(ThrottlerGuard)
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: vi.fn().mockReturnValue(true) })
       .overrideGuard(VerificationThrottlerGuard)
       .useValue({ canActivate: vi.fn().mockReturnValue(true) })

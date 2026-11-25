@@ -810,7 +810,12 @@ describe("PaymentApiService", () => {
 
     it("throws PaymentAccessForbiddenException when user does not own payment", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "different-user" },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: "different-user",
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -823,11 +828,17 @@ describe("PaymentApiService", () => {
 
   describe("initiateRefund", () => {
     const refundDto = { amount: 5000, reason: "Customer request" };
+    const refundableBooking = {
+      id: "booking-123",
+      status: BookingStatus.CANCELLED,
+      paymentStatus: PaymentStatus.REFUND_PROCESSING,
+      userId: mockUserInfo.id,
+    };
 
     it("defers terminal finalization until the provider response is verified", async () => {
       const payment = createPayment({
         amountCharged: new Decimal(5000),
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -863,9 +874,8 @@ describe("PaymentApiService", () => {
       expect(transactionClient.booking.updateMany).toHaveBeenCalledWith({
         where: {
           id: "booking-123",
-          paymentStatus: {
-            in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
-          },
+          status: BookingStatus.CANCELLED,
+          paymentStatus: PaymentStatus.REFUND_PROCESSING,
         },
         data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
       });
@@ -873,7 +883,7 @@ describe("PaymentApiService", () => {
 
     it("keeps an accepted but pending refund silent and in processing", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
       vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
@@ -904,7 +914,7 @@ describe("PaymentApiService", () => {
 
     it("preserves the provider refund ID when local persistence becomes uncertain", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
       vi.mocked(databaseService.payment.updateMany)
@@ -965,7 +975,12 @@ describe("PaymentApiService", () => {
 
     it("throws PaymentAccessForbiddenException when user does not own refund payment", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: "different-user" },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: "different-user",
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -978,7 +993,12 @@ describe("PaymentApiService", () => {
     it("throws RefundPaymentNotSuccessfulException when payment is not successful", async () => {
       const payment = createPayment({
         status: "PENDING",
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: mockUserInfo.id,
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -991,7 +1011,12 @@ describe("PaymentApiService", () => {
     it("throws RefundAmountExceedsChargeException when refund exceeds the charge", async () => {
       const payment = createPayment({
         amountCharged: new Decimal(1000), // Amount charged is less than refund request of 5000
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: mockUserInfo.id,
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -1004,7 +1029,12 @@ describe("PaymentApiService", () => {
     it("throws RefundChargedAmountMissingException when charged amount is missing", async () => {
       const payment = createPayment({
         amountCharged: null,
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: mockUserInfo.id,
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -1017,7 +1047,12 @@ describe("PaymentApiService", () => {
     it("throws RefundProviderReferenceMissingException when provider reference is missing", async () => {
       const payment = createPayment({
         flutterwaveTransactionId: null,
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: mockUserInfo.id,
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -1029,7 +1064,7 @@ describe("PaymentApiService", () => {
 
     it("should set payment status to REFUND_FAILED when provider rejects refund", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -1054,7 +1089,7 @@ describe("PaymentApiService", () => {
 
     it("should set REFUND_ERROR when network error occurs during refund", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -1079,7 +1114,7 @@ describe("PaymentApiService", () => {
 
     it("throws RefundReservationConflictException when refund reservation loses the race", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
@@ -1091,13 +1126,54 @@ describe("PaymentApiService", () => {
     });
 
     it.each([
+      { status: BookingStatus.CONFIRMED, paymentStatus: PaymentStatus.PAID },
+      { status: BookingStatus.ACTIVE, paymentStatus: PaymentStatus.PAID },
+      { status: BookingStatus.COMPLETED, paymentStatus: PaymentStatus.PAID },
+      { status: BookingStatus.CANCELLED, paymentStatus: PaymentStatus.PAID },
+    ])(
+      "rejects self-refund when booking is not cancelled and refund-processing: %o",
+      async ({ status, paymentStatus }) => {
+        const payment = createPayment({
+          booking: { id: "booking-123", status, paymentStatus, userId: mockUserInfo.id },
+        });
+        vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+
+        await expect(
+          service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+        ).rejects.toThrow(RefundDomainStateMismatchException);
+
+        expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
+        expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects self-refund for a paid extension that is not in REFUND_PROCESSING", async () => {
+      const payment = createPayment({
+        bookingId: null,
+        extensionId: "extension-123",
+        booking: null,
+        extension: createExtension({
+          paymentStatus: PaymentStatus.PAID,
+        }),
+      });
+      vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
+
+      await expect(
+        service.initiateRefund("tx-ref-123", refundDto, mockUserInfo.id),
+      ).rejects.toThrow(RefundDomainStateMismatchException);
+
+      expect(databaseService.payment.updateMany).not.toHaveBeenCalled();
+      expect(flutterwaveService.initiateRefund).not.toHaveBeenCalled();
+    });
+
+    it.each([
       { bookingId: null, extensionId: null },
       { bookingId: "booking-123", extensionId: "extension-123" },
     ])("rejects an invalid payment association: %o", async ({ bookingId, extensionId }) => {
       const payment = createPayment({
         bookingId,
         extensionId,
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
 
@@ -1130,9 +1206,7 @@ describe("PaymentApiService", () => {
       expect(transactionClient.extension.updateMany).toHaveBeenCalledWith({
         where: {
           id: "extension-123",
-          paymentStatus: {
-            in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
-          },
+          paymentStatus: PaymentStatus.REFUND_PROCESSING,
         },
         data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
       });
@@ -1140,7 +1214,7 @@ describe("PaymentApiService", () => {
 
     it("does not call Flutterwave when the booking refund state cannot be reserved", async () => {
       const payment = createPayment({
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: refundableBooking,
       });
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);
       vi.mocked(databaseService.payment.updateMany).mockResolvedValueOnce({ count: 1 });
@@ -1158,7 +1232,12 @@ describe("PaymentApiService", () => {
       const payment = createPayment({
         status: "REFUND_ERROR",
         refundIdempotencyKey: existingIdempotencyKey,
-        booking: { id: "booking-123", status: BookingStatus.CONFIRMED, userId: mockUserInfo.id },
+        booking: {
+          id: "booking-123",
+          status: BookingStatus.CONFIRMED,
+          paymentStatus: PaymentStatus.PAID,
+          userId: mockUserInfo.id,
+        },
       });
 
       vi.mocked(databaseService.payment.findFirst).mockResolvedValueOnce(payment);

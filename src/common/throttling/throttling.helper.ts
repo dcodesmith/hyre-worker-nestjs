@@ -1,4 +1,5 @@
 import type { ThrottlerStorage } from "@nestjs/throttler";
+import { readClientRequest } from "../client-request";
 
 export interface HeaderWritable {
   setHeader(name: string, value: string): void;
@@ -20,28 +21,8 @@ export interface NamedIpThrottleConfig {
 
 export type ThrottleHitRecord = Awaited<ReturnType<ThrottlerStorage["increment"]>>;
 
-export function getClientIp(request: HttpRequestLike): string {
-  const forwardedFor = request.headers?.["x-forwarded-for"];
-
-  if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
-    return forwardedFor[0].split(",")[0].trim();
-  }
-
-  if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
-    return forwardedFor.split(",")[0].trim();
-  }
-
-  const cfIp = request.headers?.["cf-connecting-ip"];
-  if (typeof cfIp === "string" && cfIp.length > 0) {
-    return cfIp.trim();
-  }
-
-  const realIp = request.headers?.["x-real-ip"];
-  if (typeof realIp === "string" && realIp.length > 0) {
-    return realIp.trim();
-  }
-
-  return request.ip || "unknown";
+export function getClientIp(request: HttpRequestLike, edgeSecret?: string): string {
+  return readClientRequest(request.headers, edgeSecret).ipAddress ?? request.ip ?? "unknown";
 }
 
 export function isThrottled(hit: ThrottleHitRecord, limit: number): boolean {
@@ -87,8 +68,9 @@ export async function enforceNamedIpThrottle(input: {
   config: NamedIpThrottleConfig;
   fallbackPath: string;
   createException: () => Error;
+  edgeSecret?: string;
 }): Promise<true> {
-  const tracker = getClientIp(input.request);
+  const tracker = getClientIp(input.request, input.edgeSecret);
   const routePath = input.request.route?.path || input.fallbackPath;
   const method = input.request.method || "GET";
   const key = `${input.config.name}:${method}:${routePath}:${tracker}`;

@@ -666,3 +666,21 @@ describe("envSchema verification intervention encryption key", () => {
     }
   });
 });
+
+describe("envSchema API_KEY", () => {
+  it("requires at least 32 characters when API_KEY is provided", () => {
+    const tooShort = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      API_KEY: "short-key-16char",
+    });
+    expect(tooShort.success).toBe(false);
+
+    const valid = envSchema.safeParse({
+      ...productionEnv,
+      OPERATIONS_EMAIL: "ops@example.com",
+      API_KEY: "a".repeat(32),
+    });
+    expect(valid.success).toBe(true);
+  });
+});

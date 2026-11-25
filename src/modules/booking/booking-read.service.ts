@@ -1,7 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { BookingStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { omitStoredClientContext } from "../../common/client-request";
 import { FLEET_OWNER, USER } from "../auth/auth.const";
 import type { AuthSession } from "../auth/guards/session.guard";
 import { DatabaseService } from "../database/database.service";
@@ -16,7 +15,7 @@ import type {
   BookingPaymentLifecycleState,
   BookingPaymentStatusResponse,
 } from "./booking.interface";
-import { redactBookingCustomerContacts } from "./booking-contact-privacy.helper";
+import { sanitizeBookingResponse } from "./booking-contact-privacy.helper";
 import { BookingExtensionService } from "./booking-extension.service";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
@@ -29,12 +28,33 @@ export class BookingReadService {
   private readonly bookingDetailsInclude = Prisma.validator<Prisma.BookingInclude>()({
     car: {
       include: {
-        owner: true,
+        owner: {
+          select: {
+            id: true,
+            name: true,
+            username: true,
+          },
+        },
         images: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
       },
     },
-    user: true,
-    chauffeur: true,
+    user: {
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phoneNumber: true,
+        image: true,
+      },
+    },
+    chauffeur: {
+      select: {
+        id: true,
+        name: true,
+        phoneNumber: true,
+        image: true,
+      },
+    },
     flight: true,
     addons: {
       orderBy: { name: "asc" },
@@ -160,15 +180,15 @@ export class BookingReadService {
         booking.userId === sessionUser.id,
         policyNow,
       );
+      const isBooker = booking.userId === sessionUser.id;
       const serializedBooking = this.withEligibility(
         booking,
-        booking.userId === sessionUser.id,
+        isBooker,
         policyNow,
         legEligibilities,
+        !isBooker,
       );
-      return booking.userId === sessionUser.id
-        ? serializedBooking
-        : redactBookingCustomerContacts(serializedBooking);
+      return serializedBooking;
     } catch (error) {
       if (error instanceof BookingException) {
         throw error;
@@ -361,9 +381,10 @@ export class BookingReadService {
     canAct: boolean,
     now: Date,
     legEligibilities: Map<string, BookingLegExtensionEligibility>,
+    redactCustomerContacts = false,
   ) {
     const bookingWithLegEligibility = {
-      ...omitStoredClientContext(booking),
+      ...sanitizeBookingResponse(booking, { redactCustomerContacts }),
       legs: booking.legs.map((leg) => ({
         ...leg,
         ...(legEligibilities.get(leg.id) ?? {

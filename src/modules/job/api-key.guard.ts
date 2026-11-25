@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Request } from "express";
@@ -9,7 +9,7 @@ import { Request } from "express";
  * Expects the API key in the `x-api-key` header.
  * Uses timing-safe comparison to prevent timing attacks.
  *
- * If API_KEY is not configured, the guard allows all requests (disabled).
+ * Fails closed when API_KEY is not configured.
  */
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
@@ -20,9 +20,8 @@ export class ApiKeyGuard implements CanActivate {
   }
 
   canActivate(context: ExecutionContext): boolean {
-    // If no API key configured, allow all requests
     if (!this.apiKey) {
-      return true;
+      throw new UnauthorizedException("API key authentication is not configured");
     }
 
     const request = context.switchToHttp().getRequest<Request>();
@@ -40,16 +39,13 @@ export class ApiKeyGuard implements CanActivate {
   }
 
   /**
-   * Timing-safe comparison to prevent timing attacks
+   * Timing-safe comparison using fixed-length SHA-256 digests so neither
+   * length differences nor multi-byte UTF-8 inputs leak timing or throw RangeError.
    */
   private isValidApiKey(providedKey: string): boolean {
-    if (providedKey.length !== this.apiKey.length) {
-      return false;
-    }
+    const providedDigest = createHash("sha256").update(providedKey).digest();
+    const expectedDigest = createHash("sha256").update(this.apiKey).digest();
 
-    const providedBuffer = Buffer.from(providedKey);
-    const expectedBuffer = Buffer.from(this.apiKey);
-
-    return timingSafeEqual(providedBuffer, expectedBuffer);
+    return timingSafeEqual(providedDigest, expectedDigest);
   }
 }

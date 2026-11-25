@@ -128,7 +128,10 @@ export class BookingAgentExtractorService {
     }
 
     try {
-      this.logger.debug({ conversationId, inboundMessage, stage }, "Starting extraction");
+      this.logger.debug(
+        { conversationId, inboundMessageLength: inboundMessage.length, stage },
+        "Starting extraction",
+      );
       const systemPrompt = buildExtractorSystemPrompt({
         currentDraft: draft,
         lastShownOptions,
@@ -233,7 +236,7 @@ export class BookingAgentExtractorService {
       this.logger.error(
         {
           conversationId,
-          inboundMessage,
+          inboundMessageLength: inboundMessage.length,
           stack: errorStack,
           error: errorMessage,
         },

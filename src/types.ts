@@ -107,11 +107,12 @@ export type ExtensionWithNotificationRelations = Prisma.ExtensionGetPayload<{
 
 export type PaymentWithRelations = Prisma.PaymentGetPayload<{
   include: {
-    booking: { select: { id: true; status: true; userId: true } };
+    booking: { select: { id: true; status: true; paymentStatus: true; userId: true } };
     extension: {
       select: {
         id: true;
         status: true;
+        paymentStatus: true;
         bookingLeg: { select: { booking: { select: { userId: true; status: true } } } };
       };
     };

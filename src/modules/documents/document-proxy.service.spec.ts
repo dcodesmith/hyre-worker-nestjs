@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { AxiosError } from "axios";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,11 +17,13 @@ interface MockDocumentApprovalData {
   documentUrl: string;
 }
 
+const ALLOWED_ASSET_BASE_URL = "https://assets.example.com";
+
 function createMockDocumentApprovalData(
   overrides: Partial<MockDocumentApprovalData> = {},
 ): MockDocumentApprovalData {
   return {
-    documentUrl: "https://example.com/files/sample.pdf",
+    documentUrl: `${ALLOWED_ASSET_BASE_URL}/files/sample.pdf`,
     ...overrides,
   };
 }
@@ -38,6 +41,13 @@ describe("DocumentProxyService", () => {
   };
   const storageServiceMock = {
     getObjectStream: vi.fn(),
+  };
+  const configServiceMock = {
+    get: vi.fn((key: string) => {
+      if (key === "ASSET_PUBLIC_BASE_URL") return ALLOWED_ASSET_BASE_URL;
+      if (key === "NODE_ENV") return "production";
+      return undefined;
+    }),
   };
 
   beforeEach(async () => {
@@ -64,6 +74,10 @@ describe("DocumentProxyService", () => {
           provide: StorageService,
           useValue: storageServiceMock,
         },
+        {
+          provide: ConfigService,
+          useValue: configServiceMock,
+        },
       ],
     }).compile();
 
@@ -79,7 +93,7 @@ describe("DocumentProxyService", () => {
     );
   });
 
-  it("returns stream metadata when file exists", async () => {
+  it("returns stream metadata when file exists on the allowlisted asset origin", async () => {
     vi.mocked(documentApprovalMock.findUnique).mockResolvedValue(createMockDocumentApprovalData());
 
     const stream = Readable.from(Buffer.from("%PDF-1.4"));
@@ -94,16 +108,52 @@ describe("DocumentProxyService", () => {
     const result = await service.getPdfByDocumentId("doc-1");
 
     expect(httpClientService.createClient).toHaveBeenCalled();
+    expect(httpClientMock.get).toHaveBeenCalledWith(`${ALLOWED_ASSET_BASE_URL}/files/sample.pdf`, {
+      responseType: "stream",
+      maxRedirects: 0,
+    });
     expect(result.fileName).toBe("sample.pdf");
     expect(result.contentType).toBe("application/pdf");
     expect(result.contentLength).toBe(8);
     expect(result.stream).toBe(stream);
   });
 
+  it.each([
+    "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+    "https://evil.example.com/files/sample.pdf",
+    "http://assets.example.com/files/sample.pdf",
+    "https://user:pass@assets.example.com/files/sample.pdf",
+  ])("blocks SSRF to untrusted HTTP document URL %s", async (untrustedUrl) => {
+    vi.mocked(documentApprovalMock.findUnique).mockResolvedValue(
+      createMockDocumentApprovalData({ documentUrl: untrustedUrl }),
+    );
+
+    await expect(service.getPdfByDocumentId("doc-1")).rejects.toThrow(
+      DocumentFileFetchFailedException,
+    );
+    expect(httpClientMock.get).not.toHaveBeenCalled();
+  });
+
+  it.each(["text/html; charset=utf-8", "image/svg+xml", "application/javascript"])(
+    "coerces unsafe upstream Content-Type %s to application/pdf",
+    async (unsafeType) => {
+      vi.mocked(documentApprovalMock.findUnique).mockResolvedValue(
+        createMockDocumentApprovalData(),
+      );
+      vi.mocked(httpClientMock.get).mockResolvedValue({
+        data: Readable.from(Buffer.from("<html>")),
+        headers: { "content-type": unsafeType },
+      });
+
+      const result = await service.getPdfByDocumentId("doc-1");
+      expect(result.contentType).toBe("application/pdf");
+    },
+  );
+
   it("throws not found when upstream file is missing", async () => {
     vi.mocked(documentApprovalMock.findUnique).mockResolvedValue(
       createMockDocumentApprovalData({
-        documentUrl: "https://example.com/files/missing.pdf",
+        documentUrl: `${ALLOWED_ASSET_BASE_URL}/files/missing.pdf`,
       }),
     );
 

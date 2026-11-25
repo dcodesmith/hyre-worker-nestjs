@@ -258,7 +258,7 @@ export const envSchema = z
       })
       .default(false),
 
-    API_KEY: z.string().min(8, "API_KEY must be at least 32 characters").optional(),
+    API_KEY: z.string().min(32, "API_KEY must be at least 32 characters").optional(),
 
     BULL_BOARD_USERNAME: z.string().min(1).optional(),
     BULL_BOARD_PASSWORD: z

@@ -1,8 +1,8 @@
 import { Injectable } from "@nestjs/common";
-import { ThrottlerGuard } from "@nestjs/throttler";
+import { ClientIpThrottlerGuard } from "../../common/throttling/client-ip-throttler.guard";
 
 @Injectable()
-export class BookingReceiptThrottlerGuard extends ThrottlerGuard {
+export class BookingReceiptThrottlerGuard extends ClientIpThrottlerGuard {
   async onModuleInit(): Promise<void> {
     await super.onModuleInit();
     const defaultThrottler = this.throttlers.find(({ name }) => name === "default");

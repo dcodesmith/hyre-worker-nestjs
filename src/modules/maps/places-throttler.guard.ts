@@ -1,4 +1,5 @@
-import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { ThrottlerStorage } from "@nestjs/throttler";
 import { InjectThrottlerStorage } from "@nestjs/throttler";
 import type { Request, Response } from "express";
@@ -8,6 +9,7 @@ import {
   isThrottled,
   setRateLimitHeaders,
 } from "../../common/throttling/throttling.helper";
+import type { EnvConfig } from "../../config/env.config";
 import { PlacesRateLimitExceededException } from "./maps.error";
 import { PLACES_THROTTLE_CONFIG, type PlacesThrottleOperation } from "./places-throttling.config";
 
@@ -16,12 +18,16 @@ export class PlacesThrottlerGuard implements CanActivate {
   constructor(
     @InjectThrottlerStorage()
     private readonly throttlerStorage: ThrottlerStorage,
+    @Optional() private readonly configService?: ConfigService<EnvConfig>,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
-    const tracker = getClientIp(request);
+    const tracker = getClientIp(
+      request,
+      this.configService?.get("EDGE_CLIENT_SECRET", { infer: true }),
+    );
     const operation = this.resolveOperation(request);
     const limit = PLACES_THROTTLE_CONFIG.limits[operation];
     const routePath = request.route?.path || operation;

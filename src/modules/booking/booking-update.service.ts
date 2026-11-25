@@ -7,7 +7,6 @@ import {
   Prisma,
 } from "@prisma/client";
 import { PinoLogger } from "nestjs-pino";
-import { omitStoredClientContext } from "../../common/client-request";
 import { buildBookingConflictQueryInterval } from "../../shared/availability-buffer.helper";
 import { DatabaseService, lockCarRow } from "../database/database.service";
 import { BookingUpdatedHandler } from "../notification/handlers/booking-updated.handler";
@@ -33,7 +32,7 @@ import {
 } from "./booking.error";
 import type { BookingWindowedUpdateInput, CurrentBookingRecord } from "./booking.interface";
 import { availableFleetChauffeurWhere } from "./booking-chauffeur-availability";
-import { redactBookingCustomerContacts } from "./booking-contact-privacy.helper";
+import { sanitizeBookingResponse } from "./booking-contact-privacy.helper";
 import { getDatabaseNow } from "./booking-modification-policy.helper";
 import type { BookingModificationPolicyInput } from "./booking-modification-policy.interface";
 import { BookingModificationPolicyService } from "./booking-modification-policy.service";
@@ -222,7 +221,7 @@ export class BookingUpdateService {
           );
         }
 
-        return redactBookingCustomerContacts(omitStoredClientContext(updatedBooking));
+        return sanitizeBookingResponse(updatedBooking, { redactCustomerContacts: true });
       });
 
       return booking;
@@ -610,7 +609,7 @@ export class BookingUpdateService {
     now: Date,
   ) {
     return {
-      ...omitStoredClientContext(booking),
+      ...sanitizeBookingResponse(booking, { redactCustomerContacts: false }),
       ...this.bookingModificationPolicyService.getEligibility(booking, true, now),
     };
   }

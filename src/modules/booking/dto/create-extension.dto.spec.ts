@@ -5,7 +5,7 @@ describe("createExtensionBodySchema", () => {
   const bookingLegId = "01994a1d-4263-7000-8000-000000000001";
   const validBody = {
     hours: 2,
-    callbackUrl: "https://example.com/callback",
+    callbackUrl: "http://localhost:3000/callback",
   };
 
   it("accepts a body without bookingLegId for backward compatibility", () => {

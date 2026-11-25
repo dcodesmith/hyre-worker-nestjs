@@ -166,8 +166,19 @@ describe("BookingCancellationService", () => {
     txMock.booking.findUniqueOrThrow.mockResolvedValueOnce({
       id: "booking-1",
       status: BookingStatus.CANCELLED,
-      car: { owner: {} },
-      user: {},
+      completionTokenHash: "completion-hash",
+      guestAccessTokenHash: "guest-hash",
+      paymentStatusTokenHash: "payment-hash",
+      car: {
+        owner: {
+          id: "owner-1",
+          name: "Fleet Co",
+          email: "owner@private.test",
+          phoneNumber: "+2348099999999",
+          chauffeurs: [{ id: "ch-1", name: "Driver", phoneNumber: "+2348011111111" }],
+        },
+      },
+      user: { id: "user-1", name: "Ada", email: "ada@example.com", address: "Private St" },
       legs: [],
     });
     txMock.car.update.mockResolvedValueOnce({ id: "car-1", status: "AVAILABLE" });
@@ -185,8 +196,20 @@ describe("BookingCancellationService", () => {
     );
 
     expect(result).toEqual(
-      expect.objectContaining({ id: "booking-1", status: BookingStatus.CANCELLED }),
+      expect.objectContaining({
+        id: "booking-1",
+        status: BookingStatus.CANCELLED,
+        car: { owner: { id: "owner-1", name: "Fleet Co" } },
+        user: { id: "user-1", name: "Ada", email: "ada@example.com" },
+      }),
     );
+    expect(result).not.toHaveProperty("completionTokenHash");
+    expect(result).not.toHaveProperty("guestAccessTokenHash");
+    expect(result).not.toHaveProperty("paymentStatusTokenHash");
+    expect((result.car as { owner?: Record<string, unknown> }).owner).not.toHaveProperty(
+      "chauffeurs",
+    );
+    expect((result.car as { owner?: Record<string, unknown> }).owner).not.toHaveProperty("email");
     const updateQuery = txMock.$queryRaw.mock.calls[3]?.[0];
     expect(getQueryText(updateQuery)).toContain("clock_timestamp() <");
     expect(getQueryText(updateQuery)).toContain('"referralCreditsReserved" = 0');

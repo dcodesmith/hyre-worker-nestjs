@@ -68,7 +68,18 @@ export class ReviewsReadService {
 
     const reviewsPromise = this.databaseService.review.findMany({
       where: whereClause,
-      include: {
+      select: {
+        id: true,
+        bookingId: true,
+        userId: true,
+        overallRating: true,
+        carRating: true,
+        chauffeurRating: true,
+        serviceRating: true,
+        comment: true,
+        isVisible: true,
+        createdAt: true,
+        updatedAt: true,
         booking: {
           select: {
             id: true,
@@ -220,9 +231,6 @@ export class ReviewsReadService {
       serviceRating: true,
       comment: true,
       isVisible: true,
-      moderatedBy: true,
-      moderatedAt: true,
-      moderationNotes: true,
       createdAt: true,
       updatedAt: true,
       booking: {

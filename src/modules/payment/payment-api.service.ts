@@ -332,9 +332,11 @@ export class PaymentApiService {
         amountCharged: true,
         flutterwaveTransactionId: true,
         refundIdempotencyKey: true,
-        booking: { select: { userId: true } },
+        booking: { select: { userId: true, status: true, paymentStatus: true } },
         extension: {
           select: {
+            status: true,
+            paymentStatus: true,
             bookingLeg: { select: { booking: { select: { userId: true } } } },
           },
         },
@@ -381,6 +383,28 @@ export class PaymentApiService {
     if (!payment.flutterwaveTransactionId) {
       throw new RefundProviderReferenceMissingException(payment.id);
     }
+
+    if (
+      (!payment.bookingId && !payment.extensionId) ||
+      (payment.bookingId && payment.extensionId)
+    ) {
+      throw new RefundDomainStateMismatchException(payment.id);
+    }
+
+    if (
+      payment.bookingId &&
+      (payment.booking?.status !== BookingStatus.CANCELLED ||
+        payment.booking.paymentStatus !== PaymentStatus.REFUND_PROCESSING)
+    ) {
+      throw new RefundDomainStateMismatchException(payment.id);
+    }
+
+    if (
+      payment.extensionId &&
+      payment.extension?.paymentStatus !== PaymentStatus.REFUND_PROCESSING
+    ) {
+      throw new RefundDomainStateMismatchException(payment.id);
+    }
   }
 
   private getRefundIdempotencyKey(
@@ -398,13 +422,6 @@ export class PaymentApiService {
     amount: number,
     idempotencyKey: string,
   ): Promise<void> {
-    if (
-      (!payment.bookingId && !payment.extensionId) ||
-      (payment.bookingId && payment.extensionId)
-    ) {
-      throw new RefundDomainStateMismatchException(payment.id);
-    }
-
     const reserved = await this.databaseService.$transaction(async (tx) => {
       const { count } = await tx.payment.updateMany({
         where: {
@@ -430,9 +447,8 @@ export class PaymentApiService {
         const bookingUpdate = await tx.booking.updateMany({
           where: {
             id: payment.bookingId,
-            paymentStatus: {
-              in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
-            },
+            status: BookingStatus.CANCELLED,
+            paymentStatus: PaymentStatus.REFUND_PROCESSING,
           },
           data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
         });
@@ -444,9 +460,7 @@ export class PaymentApiService {
         const extensionUpdate = await tx.extension.updateMany({
           where: {
             id: payment.extensionId,
-            paymentStatus: {
-              in: [PaymentStatus.PAID, PaymentStatus.REFUND_PROCESSING],
-            },
+            paymentStatus: PaymentStatus.REFUND_PROCESSING,
           },
           data: { paymentStatus: PaymentStatus.REFUND_PROCESSING },
         });

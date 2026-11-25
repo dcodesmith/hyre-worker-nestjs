@@ -1,3 +1,4 @@
+import { hasValidFileSignature } from "../../common/validation/file-signature";
 import {
   IMAGE_MIME_TYPES_SET,
   MAX_FILE_SIZE_BYTES,
@@ -20,8 +21,11 @@ export function validateCarImages(images: UploadedCarFile[]): void {
     if (!IMAGE_MIME_TYPES_SET.has(image.mimetype)) {
       throw new CarValidationException("Images must be JPEG, PNG or WebP");
     }
-    if (image.size > MAX_FILE_SIZE_BYTES) {
+    if (image.size <= 0 || image.size > MAX_FILE_SIZE_BYTES) {
       throw new CarValidationException("Each image must be less than 5MB");
+    }
+    if (!hasValidFileSignature(image.buffer, image.mimetype)) {
+      throw new CarValidationException("Image content does not match its file type");
     }
   }
 }
@@ -36,7 +40,10 @@ export function validateCarCertificate(
   if (file.mimetype !== PDF_MIME_TYPE) {
     throw new CarValidationException(`${label} certificate must be a PDF file`);
   }
-  if (file.size > MAX_FILE_SIZE_BYTES) {
+  if (file.size <= 0 || file.size > MAX_FILE_SIZE_BYTES) {
     throw new CarValidationException(`${label} certificate must be less than 5MB`);
+  }
+  if (!hasValidFileSignature(file.buffer, file.mimetype)) {
+    throw new CarValidationException(`${label} certificate content does not match its file type`);
   }
 }

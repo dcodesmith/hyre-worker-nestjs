@@ -1,8 +1,8 @@
-import { GUARDS_METADATA } from "@nestjs/common/constants";
+import { GUARDS_METADATA, HEADERS_METADATA } from "@nestjs/common/constants";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { ThrottlerGuard } from "@nestjs/throttler";
 import { BookingCompletionSource } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ClientIpThrottlerGuard } from "../../common/throttling/client-ip-throttler.guard";
 import { ADMIN, FLEET_OWNER, STAFF } from "../auth/auth.const";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { SessionGuard } from "../auth/guards/session.guard";
@@ -36,7 +36,7 @@ describe("airport trip completion controllers", () => {
       .useValue({ canActivate: vi.fn() })
       .overrideGuard(VerifiedFleetOwnerGuard)
       .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
-      .overrideGuard(ThrottlerGuard)
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: vi.fn() })
       .compile();
 
@@ -109,6 +109,28 @@ describe("airport trip completion controllers", () => {
     expect(guards).toEqual(
       expect.arrayContaining([SessionGuard, RoleGuard, VerifiedFleetOwnerGuard]),
     );
+  });
+
+  it("sets no-store and no-referrer headers on tokenized airport completion pages", () => {
+    const getHeaders =
+      Reflect.getMetadata(
+        HEADERS_METADATA,
+        AirportTripCompletionPageController.prototype.showCompletionPage,
+      ) ?? [];
+    const postHeaders =
+      Reflect.getMetadata(
+        HEADERS_METADATA,
+        AirportTripCompletionPageController.prototype.completeFromPage,
+      ) ?? [];
+
+    for (const headers of [getHeaders, postHeaders]) {
+      expect(headers).toEqual(
+        expect.arrayContaining([
+          { name: "Cache-Control", value: "private, no-store" },
+          { name: "Referrer-Policy", value: "no-referrer" },
+        ]),
+      );
+    }
   });
 
   it("completes a fleet-owned trip as the fleet owner", async () => {

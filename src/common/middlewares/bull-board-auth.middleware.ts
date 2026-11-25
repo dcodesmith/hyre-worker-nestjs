@@ -1,5 +1,18 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+
+/**
+ * Fail-closed middleware used when Bull Board credentials are not configured.
+ */
+export function createBullBoardDisabledMiddleware(): (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => void {
+  return (_req: Request, res: Response) => {
+    res.sendStatus(404);
+  };
+}
 
 /**
  * Creates a basic authentication middleware for Bull Board
@@ -17,9 +30,17 @@ export function createBullBoardAuthMiddleware(
       return;
     }
 
-    const encoded = authHeader.split(" ")[1];
+    const encoded = authHeader.slice("Basic ".length).trim();
     const decoded = Buffer.from(encoded, "base64").toString("utf-8");
-    const [reqUsername, reqPassword] = decoded.split(":");
+    const separatorIndex = decoded.indexOf(":");
+
+    if (separatorIndex === -1) {
+      sendUnauthorizedResponse(res);
+      return;
+    }
+
+    const reqUsername = decoded.slice(0, separatorIndex);
+    const reqPassword = decoded.slice(separatorIndex + 1);
 
     if (!isValidCredentials(reqUsername, reqPassword, username, password)) {
       sendUnauthorizedResponse(res);
@@ -45,17 +66,14 @@ function isValidCredentials(
 }
 
 /**
- * Timing-safe string comparison
+ * Timing-safe string comparison using fixed-length SHA-256 digests so neither
+ * length differences nor multi-byte UTF-8 inputs leak timing or throw RangeError.
  */
 function safeCompare(provided: string, expected: string): boolean {
-  if (provided.length !== expected.length) {
-    return false;
-  }
+  const providedDigest = createHash("sha256").update(provided).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
 
-  const providedBuffer = Buffer.from(provided);
-  const expectedBuffer = Buffer.from(expected);
-
-  return timingSafeEqual(providedBuffer, expectedBuffer);
+  return timingSafeEqual(providedDigest, expectedDigest);
 }
 
 /**

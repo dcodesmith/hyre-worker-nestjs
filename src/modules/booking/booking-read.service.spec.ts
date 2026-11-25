@@ -372,7 +372,17 @@ describe("BookingReadService", () => {
       userId: "user-2",
       status: "CONFIRMED",
       totalAmount: { toNumber: () => 12000 },
-      user: { name: "Ada", email: "ada@example.com", phoneNumber: "+2348012345678" },
+      completionTokenHash: "secret-completion-hash",
+      guestAccessTokenHash: "secret-guest-hash",
+      paymentStatusTokenHash: "secret-payment-hash",
+      user: {
+        name: "Ada",
+        email: "ada@example.com",
+        phoneNumber: "+2348012345678",
+        address: "12 Victoria Island",
+        city: "Lagos",
+        referralCode: "ADA123",
+      },
       guestUser: {
         name: "Guest",
         email: "guest@example.com",
@@ -381,6 +391,25 @@ describe("BookingReadService", () => {
         phone: "08012345678",
         phoneNumber: "+2348012345678",
       },
+      car: {
+        id: "car-1",
+        owner: {
+          id: "owner-1",
+          name: "Fleet Co",
+          username: "fleetco",
+          email: "owner@private.test",
+          phoneNumber: "+2348099999999",
+          address: "Secret HQ",
+        },
+      },
+      chauffeur: {
+        id: "ch-1",
+        name: "Driver One",
+        phoneNumber: "+2348088888888",
+        image: null,
+        email: "driver@private.test",
+        address: "Driver Home",
+      },
       legs: [{ id: "leg-1" }],
     });
 
@@ -388,6 +417,19 @@ describe("BookingReadService", () => {
 
     expect(result.user).toEqual({ name: "Ada" });
     expect(result.guestUser).toEqual({ name: "Guest" });
+    expect(result.car).toEqual({
+      id: "car-1",
+      owner: { id: "owner-1", name: "Fleet Co", username: "fleetco" },
+    });
+    expect(result.chauffeur).toEqual({
+      id: "ch-1",
+      name: "Driver One",
+      phoneNumber: "+2348088888888",
+      image: null,
+    });
+    expect(result).not.toHaveProperty("completionTokenHash");
+    expect(result).not.toHaveProperty("guestAccessTokenHash");
+    expect(result).not.toHaveProperty("paymentStatusTokenHash");
   });
 
   it("throws BookingNotFoundException when booking does not exist for customer", async () => {

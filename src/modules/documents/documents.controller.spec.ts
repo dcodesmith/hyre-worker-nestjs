@@ -66,6 +66,8 @@ describe("DocumentsController", () => {
     await controller.proxyPdf("doc-1", response as unknown as Response);
 
     const escapedFileName = String.raw`report\\final\"2026.pdf`;
+    expect(response.setHeader).toHaveBeenCalledWith("X-Content-Type-Options", "nosniff");
+    expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(response.setHeader).toHaveBeenCalledWith(
       "Content-Disposition",
       `inline; filename="${escapedFileName}"`,

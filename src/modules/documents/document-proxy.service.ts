@@ -1,7 +1,9 @@
 import { basename } from "node:path";
 import type { Readable } from "node:stream";
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { AxiosError } from "axios";
+import type { EnvConfig } from "../../config/env.config";
 import { DatabaseService } from "../database/database.service";
 import { HttpClientService } from "../http-client/http-client.service";
 import { StorageService } from "../storage/storage.service";
@@ -12,12 +14,20 @@ import {
   DocumentNotFoundException,
 } from "./documents.error";
 
+const ALLOWED_PROXIED_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
 @Injectable()
 export class DocumentProxyService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly httpClientService: HttpClientService,
     private readonly storageService: StorageService,
+    private readonly configService: ConfigService<EnvConfig>,
   ) {}
 
   async getPdfByDocumentId(documentId: string): Promise<ProxiedPdfResult> {
@@ -56,6 +66,10 @@ export class DocumentProxyService {
   }
 
   private async fetchHttpPdf(documentId: string, documentUrl: string): Promise<ProxiedPdfResult> {
+    if (!this.isAllowedHttpDocumentUrl(documentUrl)) {
+      throw new DocumentFileFetchFailedException();
+    }
+
     const httpClient = this.httpClientService.createClient({
       serviceName: "DocumentProxy",
       headers: {
@@ -66,6 +80,7 @@ export class DocumentProxyService {
     try {
       const response = await httpClient.get<Readable>(documentUrl, {
         responseType: "stream",
+        maxRedirects: 0,
       });
 
       return {
@@ -80,6 +95,33 @@ export class DocumentProxyService {
       }
 
       throw new DocumentFileFetchFailedException();
+    }
+  }
+
+  private isAllowedHttpDocumentUrl(documentUrl: string): boolean {
+    const assetBaseUrl = this.configService.get("ASSET_PUBLIC_BASE_URL", { infer: true });
+    if (!assetBaseUrl) {
+      return false;
+    }
+
+    try {
+      const parsedTarget = new URL(documentUrl);
+      const parsedAllowedBase = new URL(assetBaseUrl);
+
+      if (parsedTarget.username || parsedTarget.password) {
+        return false;
+      }
+
+      if (
+        this.configService.get("NODE_ENV", { infer: true }) === "production" &&
+        parsedTarget.protocol !== "https:"
+      ) {
+        return false;
+      }
+
+      return parsedTarget.origin === parsedAllowedBase.origin;
+    } catch {
+      return false;
     }
   }
 
@@ -115,8 +157,11 @@ export class DocumentProxyService {
   }
 
   private resolveContentType(contentTypeHeader: unknown): string {
-    if (typeof contentTypeHeader === "string" && contentTypeHeader.length > 0) {
-      return contentTypeHeader;
+    if (typeof contentTypeHeader === "string") {
+      const normalized = contentTypeHeader.split(";")[0]?.trim().toLowerCase();
+      if (normalized && ALLOWED_PROXIED_CONTENT_TYPES.has(normalized)) {
+        return normalized;
+      }
     }
     return "application/pdf";
   }
