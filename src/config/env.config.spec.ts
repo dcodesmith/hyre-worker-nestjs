@@ -668,18 +668,18 @@ describe("envSchema verification intervention encryption key", () => {
 });
 
 describe("envSchema API_KEY", () => {
-  it("requires at least 16 characters when API_KEY is provided", () => {
+  it("requires at least 8 characters when API_KEY is provided", () => {
     const tooShort = envSchema.safeParse({
       ...productionEnv,
       OPERATIONS_EMAIL: "ops@example.com",
-      API_KEY: "short-key-15chr",
+      API_KEY: "short-7",
     });
     expect(tooShort.success).toBe(false);
 
     const valid = envSchema.safeParse({
       ...productionEnv,
       OPERATIONS_EMAIL: "ops@example.com",
-      API_KEY: "a".repeat(16),
+      API_KEY: "a".repeat(8),
     });
     expect(valid.success).toBe(true);
   });

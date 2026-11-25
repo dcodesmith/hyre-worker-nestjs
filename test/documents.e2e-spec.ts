@@ -1,9 +1,11 @@
 import { createServer, type Server } from "node:http";
 import { HttpStatus, type INestApplication } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Test, type TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppModule } from "../src/app.module";
+import type { EnvConfig } from "../src/config/env.config";
 import { AuthEmailService } from "../src/modules/auth/auth-email.service";
 import { DatabaseService } from "../src/modules/database/database.service";
 import { TestDataFactory, uniqueEmail } from "./helpers";
@@ -39,7 +41,6 @@ describe("Documents E2E Tests", () => {
     });
 
     previousAllowedDocumentOrigins = process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS;
-    process.env.DOCUMENT_PROXY_ALLOWED_ORIGINS = new URL(localPdfUrl).origin;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -49,6 +50,9 @@ describe("Documents E2E Tests", () => {
       .compile();
 
     app = moduleFixture.createNestApplication({ logger: false });
+
+    const configService = app.get<ConfigService<EnvConfig>>(ConfigService);
+    configService.set("DOCUMENT_PROXY_ALLOWED_ORIGINS", [new URL(localPdfUrl).origin]);
 
     databaseService = app.get(DatabaseService);
     factory = new TestDataFactory(databaseService, app);
